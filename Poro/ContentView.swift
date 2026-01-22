@@ -9,13 +9,21 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
+        //Vertical stack
+        VStack(spacing: 20) {
+            Image(systemName: "pawprint.fill")
                 .imageScale(.large)
                 .foregroundStyle(.tint)
-            Text("Hello, world!")
+
+            Text("Poro")
+                .font(.headline)
+
+            Button("Quit") {
+                NSApplication.shared.terminate(nil)
+            }
         }
         .padding()
+        .frame(width: 250)
     }
 }
 
