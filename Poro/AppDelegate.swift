@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 //Object getting lifecycle callbacks from macOS
 //Allows us to respond to OS level events such as app launching, closing ,etc
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -8,5 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         assistantWindowController = AssistantWindowController()
         assistantWindowController?.show()
+        
+        KeyboardShortcuts.onKeyUp(for: .toggleAssistantWindow) { [weak self] in
+            Task { @MainActor in
+                self?.assistantWindowController?.toggleVisibility()
+        }
     }
+    
+    }
+
+
 }
