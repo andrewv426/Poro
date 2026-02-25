@@ -9,14 +9,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         assistantWindowController = AssistantWindowController()
         assistantWindowController?.show()
-        
+
+        KeyboardShortcuts.setShortcut(
+            .init(.t, modifiers: [.command, .option]),
+            for: .toggleAssistantWindow
+        )
+
         KeyboardShortcuts.onKeyUp(for: .toggleAssistantWindow) { [weak self] in
             Task { @MainActor in
                 self?.assistantWindowController?.toggleVisibility()
+            }
         }
     }
-    
-    }
-
-
 }
