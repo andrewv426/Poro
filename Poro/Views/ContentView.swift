@@ -8,16 +8,14 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var messages: [ChatMessage] = [
-        ChatMessage(role: .assistant, text: "Ready.")
-    ]
+    @State private var chatController = ChatController()
     @State private var draftMessage = ""
 
     var body: some View {
         VStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(messages) { message in
+                    ForEach(chatController.session.messages) { message in
                         Text("\(message.role.label): \(message.text)")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -29,8 +27,10 @@ struct ContentView: View {
                 TextField("Message", text: $draftMessage)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(sendMessage)
+                .disabled(chatController.isResponding)
 
-                Button("Send", action: sendMessage)
+                Button(chatController.isResponding ? "Waiting..." : "Send", action: sendMessage)
+                    .disabled(chatController.isResponding)
             }
         }
         .padding()
@@ -44,9 +44,8 @@ struct ContentView: View {
             return
         }
 
-        messages.append(ChatMessage(role: .user, text: text))
         draftMessage = ""
-        messages.append(ChatMessage(role: .assistant, text: "Not connected yet."))
+        chatController.send(text)
     }
 }
 
