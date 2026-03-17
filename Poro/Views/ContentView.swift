@@ -23,14 +23,21 @@ struct ContentView: View {
                 .padding()
             }
 
+            if case let .failed(message) = chatController.requestState {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack {
                 TextField("Message", text: $draftMessage)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(sendMessage)
-                .disabled(chatController.isResponding)
+                .disabled(chatController.requestState.isSending)
 
-                Button(chatController.isResponding ? "Waiting..." : "Send", action: sendMessage)
-                    .disabled(chatController.isResponding)
+                Button(chatController.requestState.isSending ? "Waiting..." : "Send", action: sendMessage)
+                    .disabled(chatController.requestState.isSending)
             }
         }
         .padding()

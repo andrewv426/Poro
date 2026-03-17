@@ -4,8 +4,22 @@ import Observation
 @Observable
 @MainActor
 final class ChatController {
+    enum RequestState {
+        case idle
+        case sending
+        case failed(String)
+
+        var isSending: Bool {
+            if case .sending = self {
+                return true
+            }
+
+            return false
+        }
+    }
+
     let session: ChatSession
-    private(set) var isResponding = false
+    private(set) var requestState: RequestState = .idle
     private let llmClient: LLMClient
 
     init(session: ChatSession, llmClient: LLMClient) {
@@ -20,23 +34,25 @@ final class ChatController {
     func send(_ text: String) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !trimmedText.isEmpty, !isResponding else {
+        guard !trimmedText.isEmpty, !requestState.isSending else {
             return
         }
 
+        requestState = .idle
         session.appendUserMessage(trimmedText)
         let messages = session.messages
-        isResponding = true
+        requestState = .sending
 
         Task {
             do {
                 let response = try await llmClient.complete(messages: messages)
                 session.appendAssistantMessage(response)
+                requestState = .idle
             } catch {
-                session.appendAssistantMessage("Something went wrong.")
+                let errorMessage = "Something went wrong."
+                session.appendAssistantMessage(errorMessage)
+                requestState = .failed(errorMessage)
             }
-
-            isResponding = false
         }
     }
 }
