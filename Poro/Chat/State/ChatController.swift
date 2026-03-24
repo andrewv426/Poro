@@ -8,14 +8,6 @@ final class ChatController {
         case idle
         case sending
         case failed(String)
-
-        var isSending: Bool {
-            if case .sending = self {
-                return true
-            }
-
-            return false
-        }
     }
 
     let session: ChatSession
@@ -31,10 +23,34 @@ final class ChatController {
         self.init(session: ChatSession(), llmClient: MockLLMClient())
     }
 
+    var messages: [ChatMessage] {
+        session.messages
+    }
+
+    var isSending: Bool {
+        if case .sending = requestState {
+            return true
+        }
+
+        return false
+    }
+
+    var errorMessage: String? {
+        if case let .failed(message) = requestState {
+            return message
+        }
+
+        return nil
+    }
+
+    var canSendMessage: Bool {
+        !isSending
+    }
+
     func send(_ text: String) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !trimmedText.isEmpty, !requestState.isSending else {
+        guard !trimmedText.isEmpty, canSendMessage else {
             return
         }
 

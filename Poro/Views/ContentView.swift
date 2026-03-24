@@ -15,7 +15,7 @@ struct ContentView: View {
         VStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(chatController.session.messages) { message in
+                    ForEach(chatController.messages) { message in
                         Text("\(message.role.label): \(message.text)")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -23,7 +23,7 @@ struct ContentView: View {
                 .padding()
             }
 
-            if case let .failed(message) = chatController.requestState {
+            if let message = chatController.errorMessage {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)
@@ -34,10 +34,10 @@ struct ContentView: View {
                 TextField("Message", text: $draftMessage)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(sendMessage)
-                .disabled(chatController.requestState.isSending)
+                .disabled(!chatController.canSendMessage)
 
-                Button(chatController.requestState.isSending ? "Waiting..." : "Send", action: sendMessage)
-                    .disabled(chatController.requestState.isSending)
+                Button(chatController.isSending ? "Waiting..." : "Send", action: sendMessage)
+                    .disabled(!chatController.canSendMessage)
             }
         }
         .padding()
