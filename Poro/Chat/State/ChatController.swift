@@ -66,12 +66,14 @@ final class ChatController {
     requestState = .idle
     session.appendUserMessage(trimmedText)
     let messages = session.messages
+    let assistantMessageID = session.appendAssistantPlaceholder()
     requestState = .sending
 
     Task {
       do {
-        let response = try await llmClient.complete(messages: messages)
-        session.appendAssistantMessage(response)
+        try await llmClient.streamCompletion(messages: messages) { [session] delta in
+          session.appendText(delta, toMessageWithID: assistantMessageID)
+        }
         requestState = .idle
       } catch {
         let errorMessage = userFacingMessage(for: error)

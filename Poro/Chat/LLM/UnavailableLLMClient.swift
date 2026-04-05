@@ -1,7 +1,10 @@
 struct UnavailableLLMClient: LLMClient {
   let error: Error
 
-  func complete(messages: [ChatMessage]) async throws -> String {
+  func streamCompletion(
+    messages: [ChatMessage],
+    onDelta: @escaping @MainActor (String) -> Void
+  ) async throws {
     throw error
   }
 }

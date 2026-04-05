@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Poro — Floating AI Assistant</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --accent: #E8D4A8;
+    --accent-soft: rgba(232, 212, 168, 0.14);
+    --rose: #fb7185;
+
+    --fg: rgba(255,255,255,0.92);
+    --fg-dim: rgba(255,255,255,0.85);
+    --fg-muted: rgba(255,255,255,0.40);
+    --fg-faint: rgba(255,255,255,0.22);
+    --fg-trace: rgba(255,255,255,0.08);
+    --fg-ghost: rgba(255,255,255,0.04);
+
+    --win-tint: rgba(22, 22, 28, 0.62);
+    --win-tint-solid: rgba(28, 28, 34, 0.88);
+    --win-border: rgba(255,255,255,0.08);
+    --win-shadow:
+      0 10px 30px rgba(0,0,0,0.45),
+      0 2px 6px rgba(0,0,0,0.3),
+      0 0 0 0.5px rgba(0,0,0,0.5);
+
+    --sf: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #0a0a0d;
+    color: var(--fg);
+    font-family: var(--sf);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #app { min-height: 100vh; }
+
+  /* ───────────── Desktop stage ───────────── */
+  .stage {
+    position: relative;
+    width: 100%;
+    min-height: 100vh;
+    overflow: hidden;
+    background: #1a1a22;
+  }
+
+  /* macOS-ish wallpaper stand-in — lush dark gradient + soft color blobs */
+  .wallpaper {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(1200px 800px at 20% 20%, #3b2a5c 0%, transparent 60%),
+      radial-gradient(900px 700px at 80% 30%, #1e3a5c 0%, transparent 55%),
+      radial-gradient(1000px 800px at 60% 90%, #4a2545 0%, transparent 55%),
+      linear-gradient(180deg, #0f0e17 0%, #1a1624 100%);
+    filter: blur(0px);
+  }
+  .wallpaper::after {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.06), transparent 50%),
+      radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.05), transparent 50%),
+      radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.05), transparent 50%),
+      radial-gradient(1px 1px at 85% 70%, rgba(255,255,255,0.06), transparent 50%);
+    background-size: 300px 300px, 400px 400px, 500px 500px, 350px 350px;
+    opacity: 0.6;
+  }
+
+  /* menu bar */
+  .menubar {
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 24px;
+    background: rgba(0,0,0,0.22);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    display: flex; align-items: center;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.82);
+    gap: 16px;
+    z-index: 2;
+    border-bottom: 0.5px solid rgba(255,255,255,0.06);
+  }
+  .menubar .apple {
+    font-size: 15px; line-height: 1; transform: translateY(-1px);
+  }
+  .menubar .app-name { font-weight: 600; }
+  .menubar .menu-item { font-weight: 400; color: rgba(255,255,255,0.7); }
+  .menubar .right { margin-left: auto; display: flex; gap: 14px; align-items: center; font-weight: 400; color: rgba(255,255,255,0.75); }
+  .menubar .ico {
+    width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  /* Faux app underlay (so vibrancy has something to tint) */
+  .underlay-window {
+    position: absolute;
+    top: 72px; left: 80px; right: 80px; bottom: 60px;
+    background: rgba(20, 20, 26, 0.55);
+    border: 0.5px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    padding: 22px;
+    z-index: 1;
+  }
+  .underlay-chrome {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+  }
+  .tl {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--c); border: 0.5px solid rgba(0,0,0,0.25);
+  }
+  .underlay-title {
+    margin-left: 12px; color: rgba(255,255,255,0.4); font-size: 12px; font-weight: 500;
+  }
+  .underlay-body {
+    color: rgba(255,255,255,0.25);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.8;
+    user-select: none;
+  }
+  .underlay-body .kw { color: rgba(167,139,250,0.3); }
+  .underlay-body .str { color: rgba(134,239,172,0.3); }
+  .underlay-body .com { color: rgba(255,255,255,0.18); }
+
+  /* ───────────── The floating Poro window ───────────── */
+  .poro {
+    position: absolute;
+    left: 50%;
+    top: 30%;
+    transform: translate(-50%, -50%);
+    width: 560px;
+    min-height: 56px;
+    border-radius: 14px;
+    background: var(--win-tint);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    box-shadow: var(--win-shadow);
+    z-index: 10;
+    overflow: hidden;
+    transition: height 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    display: flex; flex-direction: column;
+  }
+  .poro::before {
+    /* inner 1px border at white/8% */
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: 14px;
+    box-shadow: inset 0 0 0 1px var(--win-border);
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .poro.collapsed { height: 56px; }
+  .poro.expanded  { height: 480px; }
+
+  /* Input row */
+  .input-row {
+    display: flex; align-items: center;
+    height: 56px;
+    flex-shrink: 0;
+    padding: 0 16px;
+    gap: 12px;
+    position: relative;
+    z-index: 2;
+  }
+  .input-row.bordered .field-wrap,
+  .input-row.pill .field-wrap {
+    flex: 1;
+    display: flex; align-items: center; gap: 12px;
+    height: 38px;
+    padding: 0 14px;
+    background: rgba(255,255,255,0.04);
+    border: 0.5px solid rgba(255,255,255,0.10);
+  }
+  .input-row.pill .field-wrap { border-radius: 999px; }
+  .input-row.bordered .field-wrap { border-radius: 9px; }
+  .input-row.flat .field-wrap { display: contents; }
+
+  .spark {
+    width: 14px; height: 14px;
+    color: var(--fg-muted);
+    flex-shrink: 0;
+    opacity: 0.5;
+  }
+  .poro-ico {
+    width: 22px; height: 22px;
+    opacity: 0.95;
+    flex-shrink: 0;
+    transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .input-row:focus-within .poro-ico { transform: translateY(-1px) scale(1.04); }
+  .top-row .poro-ico { width: 18px; height: 18px; opacity: 0.85; }
+
+  .field {
+    flex: 1;
+    background: transparent;
+    border: none; outline: none;
+    color: var(--fg);
+    font-family: var(--sf);
+    font-size: 15px;
+    line-height: 1;
+    caret-color: var(--accent);
+    padding: 0;
+  }
+  .field::placeholder { color: var(--fg-muted); }
+
+  .return-key {
+    font-family: var(--sf);
+    font-size: 13px;
+    color: var(--accent);
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    opacity: 0.95;
+  }
+
+  .stop-btn {
+    width: 24px; height: 24px;
+    padding: 0;
+    background: transparent;
+    color: rgba(251, 113, 133, 0.85);
+    border: none;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 150ms ease-out, background 150ms ease-out, transform 150ms ease-out;
+  }
+  .stop-btn:hover {
+    color: rgba(251, 113, 133, 1);
+    background: rgba(251, 113, 133, 0.10);
+    transform: scale(1.05);
+  }
+  .stop-btn:active { transform: scale(0.95); }
+
+  /* Top toolbar (expanded only) */
+  .top-row {
+    height: 32px;
+    flex-shrink: 0;
+    padding: 0 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease-out 120ms;
+  }
+  .poro.expanded .top-row { opacity: 1; pointer-events: auto; }
+  .top-row .icons { display: flex; gap: 4px; }
+  .top-row .icon-btn {
+    width: 22px; height: 22px;
+    border: none;
+    background: transparent;
+    color: var(--fg-muted);
+    border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: background 150ms ease-out, color 150ms ease-out;
+  }
+  .top-row .icon-btn:hover {
+    background: rgba(255,255,255,0.06);
+    color: var(--fg-dim);
+  }
+  .top-row svg { width: 14px; height: 14px; }
+
+  /* Messages */
+  .msgs-wrap {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    opacity: 0;
+    transition: opacity 220ms ease-out 140ms;
+  }
+  .poro.expanded .msgs-wrap { opacity: 1; }
+
+  .msgs {
+    flex: 1; min-height: 0;
+    overflow-y: auto;
+    padding: 8px 20px 16px 20px;
+    scroll-behavior: smooth;
+  }
+  .msgs::-webkit-scrollbar { width: 6px; }
+  .msgs::-webkit-scrollbar-track { background: transparent; }
+  .msgs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+
+  .msg-block { margin-bottom: 24px; }
+  .msg-block:last-child { margin-bottom: 8px; }
+
+  .msg-label {
+    font-family: var(--sf);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+    margin-bottom: 6px;
+  }
+  .msg-label.poro-label { color: var(--accent); }
+
+  .msg-body {
+    font-family: var(--sf);
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--fg);
+    font-weight: 400;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .msg-body.assistant { color: var(--fg-dim); }
+  .msg-body code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .stream-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--accent);
+    margin-left: 2px;
+    vertical-align: -0.15em;
+    animation: blink 833ms steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Divider above input (only in expanded) */
+  .divider {
+    height: 1px;
+    background: rgba(255,255,255,0.06);
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 200ms ease-out;
+  }
+  .poro.expanded .divider { opacity: 1; }
+
+  /* ───────────── Footer hint ───────────── */
+  .hint {
+    position: absolute;
+    left: 50%;
+    top: calc(30% + 260px);
+    transform: translate(-50%, 0);
+    color: rgba(255,255,255,0.32);
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--sf);
+    display: flex; gap: 8px; align-items: center;
+    z-index: 9;
+    opacity: 1;
+    transition: opacity 200ms ease-out;
+    pointer-events: none;
+  }
+  .poro.expanded ~ .hint { opacity: 0; }
+  .hint kbd {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.55);
+    border: 0.5px solid rgba(255,255,255,0.08);
+  }
+
+  /* ───────────── Tweaks panel ───────────── */
+  .tweaks {
+    position: fixed;
+    right: 18px; bottom: 18px;
+    width: 240px;
+    background: rgba(20,20,26,0.92);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 0.5px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    z-index: 100;
+    font-family: var(--sf);
+    color: var(--fg);
+  }
+  .tweaks h3 {
+    margin: 0 0 10px 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+  }
+  .tweaks .grp { margin-bottom: 12px; }
+  .tweaks .grp:last-child { margin-bottom: 0; }
+  .tweaks .grp-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--fg-dim);
+    margin-bottom: 6px;
+  }
+  .tweaks .seg {
+    display: flex;
+    background: rgba(255,255,255,0.04);
+    border: 0.5px solid rgba(255,255,255,0.08);
+    border-radius: 7px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .tweaks .seg button {
+    flex: 1;
+    padding: 4px 6px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--sf);
+    background: transparent;
+    color: var(--fg-muted);
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 120ms, color 120ms;
+  }
+  .tweaks .seg button[aria-pressed="true"] {
+    background: rgba(255,255,255,0.08);
+    color: var(--fg);
+  }
+  .tweaks .swatches { display: flex; gap: 8px; }
+  .tweaks .sw {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+    position: relative;
+    padding: 0;
+  }
+  .tweaks .sw[aria-pressed="true"] {
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 0 1px rgba(0,0,0,0.5);
+  }
+  .tweaks .row { display: flex; gap: 6px; }
+  .tweaks .action {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--sf);
+    background: rgba(255,255,255,0.06);
+    color: var(--fg);
+    border: 0.5px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 120ms;
+  }
+  .tweaks .action:hover { background: rgba(255,255,255,0.1); }
+  .tweaks .action.primary {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: rgba(167,139,250,0.3);
+  }
+
+  /* dim the stage when window dismissed */
+  .stage.dismissed .poro { opacity: 0; transform: translate(-50%, calc(-50% - 8px)); pointer-events: none; }
+  .stage .poro { transition: height 280ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 160ms ease-out, transform 160ms ease-out; }
+
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="poro-app.jsx"></script>
+
+</body>
+</html>

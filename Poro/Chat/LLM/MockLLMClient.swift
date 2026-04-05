@@ -1,5 +1,8 @@
 struct MockLLMClient: LLMClient {
-  func complete(messages: [ChatMessage]) async throws -> String {
-    "Not connected yet."
-  }
+    func streamCompletion(
+        messages: [ChatMessage],
+        onDelta: @escaping @MainActor (String) -> Void
+    ) async throws {
+        await onDelta("Not connected yet.")
+    }
 }
