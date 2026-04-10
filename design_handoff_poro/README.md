@@ -22,7 +22,7 @@ Your task is to **recreate this design in the target codebase's native environme
   - **Poro icon** — 22×22 px, the uploaded `poro.png`, 95% opacity. Lifts 1px and scales to 1.04 on input focus (200ms spring).
   - **Text field** — flex 1, transparent, no border, SF Pro 15px/1, color `rgba(255,255,255,0.92)`, caret color `var(--accent)`, placeholder `rgba(255,255,255,0.40)` "Ask anything…".
   - **Return indicator** — shows when text is present and not streaming. 14×14 return-arrow glyph in `var(--accent)`.
-- **Hint (below window, disappears on expand):** "Press ⌘␣ to summon, Esc to dismiss" at `rgba(255,255,255,0.32)`, 12px, with kbd chips at `rgba(255,255,255,0.06)` bg.
+- **Hint (below window, disappears on expand):** "Press ⌘⌥T to summon, Esc to dismiss" at `rgba(255,255,255,0.32)`, 12px, with kbd chips at `rgba(255,255,255,0.06)` bg.
 
 ### 2. Expanded — conversation + streaming
 - **Purpose:** Read + continue a conversation with the assistant.
@@ -49,7 +49,7 @@ Your task is to **recreate this design in the target codebase's native environme
 ## Interactions & Behavior
 
 ### Hotkeys
-- **⌘ + Space** (Ctrl+Space fallback) — Summon. Un-dismisses and focuses the input.
+- **⌘ + ⌥ + T** — Summon. Un-dismisses and focuses the input. Keep this non-conflicting development shortcut for the current implementation; do not switch to `⌘ + Space`.
 - **Esc** — If streaming: stop the stream. Otherwise: dismiss the window.
 - **Enter** (no Shift) — Submit current query.
 
@@ -133,5 +133,5 @@ Your task is to **recreate this design in the target codebase's native environme
 - `assets/poro.png` — mascot.
 
 ## Platform recommendations
-- **SwiftUI (preferred for real macOS app):** Borderless `NSPanel` with `.nonactivatingPanel` + `.hudWindow` style mask, `canBecomeKey = true`. Register the ⌘␣ hotkey with `NSEvent.addGlobalMonitorForEvents` + Carbon `RegisterEventHotKey` (or the `HotKey` package). Use `NSVisualEffectView` with `.hudWindow` material. Animate height with `.animation(.spring(response: 0.28, dampingFraction: 0.6))`.
+- **SwiftUI (preferred for real macOS app):** Borderless `NSPanel` with `.nonactivatingPanel` + `.hudWindow` style mask, `canBecomeKey = true`. Register the current `⌘⌥T` hotkey with `KeyboardShortcuts` (or Carbon `RegisterEventHotKey` if you later need lower-level control). Use `NSVisualEffectView` with `.hudWindow` material. Animate height with `.animation(.spring(response: 0.28, dampingFraction: 0.6))`.
 - **Electron/Tauri + React:** Frameless always-on-top window, `vibrancy: 'under-window'` (macOS), `transparent: true`. Register accelerator via `globalShortcut`. Framer Motion spring `{ type: 'spring', stiffness: 380, damping: 22 }` approximates the CSS curve.
