@@ -1,7 +1,7 @@
 import Foundation
 
-struct ChatMessage: Identifiable {
-  enum Role {
+struct ChatMessage: Identifiable, Sendable {
+  enum Role: Sendable {
     case user
     case assistant
   }

@@ -1,9 +1,9 @@
-struct UnavailableLLMClient: LLMClient {
+struct UnavailableLLMClient: LLMClient, Sendable {
   let error: Error
 
-  func streamCompletion(
+  nonisolated func streamCompletion(
     messages: [ChatMessage],
-    onDelta: @escaping @MainActor (String) -> Void
+    onDelta: @escaping @MainActor @Sendable (String) -> Void
   ) async throws {
     throw error
   }

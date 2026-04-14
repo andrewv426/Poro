@@ -3,9 +3,11 @@ import Observation
 
 @Observable
 final class ChatSession {
-  private(set) var messages: [ChatMessage] = [
-    ChatMessage(role: .assistant, text: "Ready.")
-  ]
+  private(set) var messages: [ChatMessage] = []
+
+  var hasMessages: Bool {
+    !messages.isEmpty
+  }
 
   func appendUserMessage(_ text: String) {
     messages.append(ChatMessage(role: .user, text: text))
@@ -27,5 +29,17 @@ final class ChatSession {
     }
 
     messages[index].text += text
+  }
+
+  func text(forMessageWithID id: ChatMessage.ID) -> String? {
+    messages.first(where: { $0.id == id })?.text
+  }
+
+  func removeMessage(withID id: ChatMessage.ID) {
+    messages.removeAll(where: { $0.id == id })
+  }
+
+  func clear() {
+    messages.removeAll()
   }
 }

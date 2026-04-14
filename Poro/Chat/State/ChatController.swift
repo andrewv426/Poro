@@ -13,6 +13,8 @@ final class ChatController {
   let session: ChatSession
   private(set) var requestState: RequestState = .idle
   private let llmClient: LLMClient
+  private var streamTask: Task<Void, Never>?
+  private var currentAssistantMessageID: ChatMessage.ID?
 
   init(session: ChatSession, llmClient: LLMClient) {
     self.session = session
@@ -34,6 +36,10 @@ final class ChatController {
 
   var messages: [ChatMessage] {
     session.messages
+  }
+
+  var hasConversation: Bool {
+    session.hasMessages
   }
 
   var isSending: Bool {
@@ -67,19 +73,37 @@ final class ChatController {
     session.appendUserMessage(trimmedText)
     let messages = session.messages
     let assistantMessageID = session.appendAssistantPlaceholder()
+    currentAssistantMessageID = assistantMessageID
     requestState = .sending
 
-    Task {
+    streamTask = Task { [weak self, session, llmClient] in
+      guard let self else {
+        return
+      }
+
       do {
         try await llmClient.streamCompletion(messages: messages) { [session] delta in
           session.appendText(delta, toMessageWithID: assistantMessageID)
         }
-        requestState = .idle
+        self.finishStreaming()
+      } catch is CancellationError {
+        self.handleStreamCancellation(forMessageWithID: assistantMessageID)
       } catch {
-        let errorMessage = userFacingMessage(for: error)
-        requestState = .failed(errorMessage)
+        self.handleStreamFailure(error, forMessageWithID: assistantMessageID)
       }
     }
+  }
+
+  func stopStreaming() {
+    streamTask?.cancel()
+  }
+
+  func startNewConversation() {
+    streamTask?.cancel()
+    streamTask = nil
+    currentAssistantMessageID = nil
+    requestState = .idle
+    session.clear()
   }
 
   private func userFacingMessage(for error: Error) -> String {
@@ -91,5 +115,29 @@ final class ChatController {
     }
 
     return "Something went wrong."
+  }
+
+  private func finishStreaming() {
+    streamTask = nil
+    currentAssistantMessageID = nil
+    requestState = .idle
+  }
+
+  private func handleStreamCancellation(forMessageWithID id: ChatMessage.ID) {
+    if session.text(forMessageWithID: id)?.isEmpty != false {
+      session.removeMessage(withID: id)
+    }
+
+    finishStreaming()
+  }
+
+  private func handleStreamFailure(_ error: Error, forMessageWithID id: ChatMessage.ID) {
+    if session.text(forMessageWithID: id)?.isEmpty != false {
+      session.removeMessage(withID: id)
+    }
+
+    streamTask = nil
+    currentAssistantMessageID = nil
+    requestState = .failed(userFacingMessage(for: error))
   }
 }

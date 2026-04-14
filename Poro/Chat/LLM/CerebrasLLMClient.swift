@@ -1,6 +1,6 @@
 import Foundation
 
-struct CerebrasLLMClient: LLMClient {
+struct CerebrasLLMClient: LLMClient, Sendable {
   let configuration: LLMConfiguration
   private let session: URLSession
 
@@ -9,10 +9,29 @@ struct CerebrasLLMClient: LLMClient {
     self.session = session
   }
 
-  func streamCompletion(
+  nonisolated func streamCompletion(
     messages: [ChatMessage],
-    onDelta: @escaping @MainActor (String) -> Void
+    onDelta: @escaping @MainActor @Sendable (String) -> Void
   ) async throws {
+    struct RequestMessage: Encodable, Sendable {
+      let role: String
+      let content: String
+    }
+
+    struct ChatCompletionsRequest: Encodable, Sendable {
+      let model: String
+      let messages: [RequestMessage]
+      let stream: Bool
+    }
+
+    struct ErrorResponse: Decodable, Sendable {
+      let error: APIError
+    }
+
+    struct APIError: Decodable, Sendable {
+      let message: String?
+    }
+
     let requestURL = configuration.baseURL.appendingPathComponent("chat/completions")
     var request = URLRequest(url: requestURL)
     request.httpMethod = "POST"
@@ -23,9 +42,24 @@ struct CerebrasLLMClient: LLMClient {
       request.setValue(versionPatch, forHTTPHeaderField: "X-Cerebras-Version-Patch")
     }
 
+    let requestMessages = messages.map { message in
+      let role: String
+
+      switch message.role {
+      case .user:
+        role = "user"
+      case .assistant:
+        role = "assistant"
+      }
+
+      return RequestMessage(
+        role: role,
+        content: message.text
+      )
+    }
     let requestBody = ChatCompletionsRequest(
       model: configuration.model,
-      messages: messages.map(RequestMessage.init),
+      messages: requestMessages,
       stream: true
     )
     request.httpBody = try JSONEncoder().encode(requestBody)
@@ -35,8 +69,15 @@ struct CerebrasLLMClient: LLMClient {
 
     do {
       (bytes, response) = try await session.bytes(for: request)
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       let urlError = error as? URLError
+
+      if urlError?.code == .cancelled {
+        throw CancellationError()
+      }
+
       throw LLMError.networkFailure(
         description: error.localizedDescription,
         code: urlError?.errorCode,
@@ -54,34 +95,21 @@ struct CerebrasLLMClient: LLMClient {
       throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
     }
 
+    let parser = CerebrasStreamParser()
+
     for try await line in bytes.lines {
-      guard line.hasPrefix("data: ") else {
+      try Task.checkCancellation()
+
+      switch parser.parse(line: line) {
+      case .ignore:
         continue
-      }
-
-      let payload = String(line.dropFirst(6))
-
-      if payload == "[DONE]" {
+      case .done:
         return
+      case .delta(let deltaText):
+        await MainActor.run {
+          onDelta(deltaText)
+        }
       }
-
-      guard let payloadData = payload.data(using: .utf8) else {
-        continue
-      }
-
-      let chunk: StreamingChatCompletionsResponse
-
-      do {
-        chunk = try JSONDecoder().decode(StreamingChatCompletionsResponse.self, from: payloadData)
-      } catch {
-        continue
-      }
-
-      guard let deltaText = chunk.choices.first?.delta.content, !deltaText.isEmpty else {
-        continue
-      }
-
-      await onDelta(deltaText)
     }
 
     throw LLMError.emptyResponse
@@ -95,54 +123,5 @@ struct CerebrasLLMClient: LLMClient {
     }
 
     return data
-  }
-}
-
-extension CerebrasLLMClient {
-  fileprivate struct ChatCompletionsRequest: Encodable {
-    let model: String
-    let messages: [RequestMessage]
-    let stream: Bool
-  }
-
-  fileprivate struct RequestMessage: Encodable {
-    let role: String
-    let content: String
-
-    init(message: ChatMessage) {
-      self.role = message.role.apiValue
-      self.content = message.text
-    }
-  }
-
-  fileprivate struct StreamingChatCompletionsResponse: Decodable {
-    let choices: [Choice]
-  }
-
-  fileprivate struct Choice: Decodable {
-    let delta: DeltaMessage
-  }
-
-  fileprivate struct DeltaMessage: Decodable {
-    let content: String?
-  }
-
-  fileprivate struct ErrorResponse: Decodable {
-    let error: APIError
-  }
-
-  fileprivate struct APIError: Decodable {
-    let message: String?
-  }
-}
-
-extension ChatMessage.Role {
-  fileprivate var apiValue: String {
-    switch self {
-    case .user:
-      return "user"
-    case .assistant:
-      return "assistant"
-    }
   }
 }
