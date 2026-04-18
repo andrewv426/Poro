@@ -4,6 +4,8 @@ struct TopToolbarView: View {
   let onNewConversation: () -> Void
   let onHistory: () -> Void
   let onSettings: () -> Void
+  let statusLine: String?
+  let onEndSession: (() -> Void)?
 
   var body: some View {
     HStack(spacing: 0) {
@@ -13,9 +15,20 @@ struct TopToolbarView: View {
         .frame(width: 18, height: 18)
         .opacity(0.85)
 
-      Spacer()
+      if let statusLine, !statusLine.isEmpty {
+        Text(statusLine)
+          .font(.system(size: 11.5, weight: .medium))
+          .foregroundStyle(PoroTheme.mutedText)
+          .lineLimit(1)
+          .padding(.leading, 10)
+      }
+
+      Spacer(minLength: 12)
 
       HStack(spacing: 4) {
+        if let onEndSession {
+          iconButton("stop.fill", action: onEndSession)
+        }
         iconButton("square.and.pencil", action: onNewConversation)
         iconButton("clock", action: onHistory)
         iconButton("gearshape", action: onSettings)

@@ -1,57 +1,71 @@
 import SwiftUI
 
 struct ContentView: View {
-  @State private var chatController: ChatController
-  @State private var draftMessage = ""
+  @Bindable var poroController: PoroController
   @FocusState private var isInputFocused: Bool
 
   private let onDismissRequest: () -> Void
-  private let onExpansionChange: (Bool) -> Void
+  private let onPanelHeightChange: (CGFloat) -> Void
 
-  @MainActor
   init(
-    chatController: ChatController? = nil,
+    poroController: PoroController,
     onDismissRequest: @escaping () -> Void = {},
-    onExpansionChange: @escaping (Bool) -> Void = { _ in }
+    onPanelHeightChange: @escaping (CGFloat) -> Void = { _ in }
   ) {
-    _chatController = State(initialValue: chatController ?? ChatController())
+    self.poroController = poroController
     self.onDismissRequest = onDismissRequest
-    self.onExpansionChange = onExpansionChange
-  }
-
-  private var isExpanded: Bool {
-    chatController.hasConversation
-  }
-
-  private var surfaceHeight: CGFloat {
-    isExpanded ? PoroTheme.expandedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
+    self.onPanelHeightChange = onPanelHeightChange
   }
 
   private var totalHeight: CGFloat {
-    isExpanded ? PoroTheme.expandedSurfaceHeight : PoroTheme.collapsedTotalHeight
+    switch poroController.panelRoute {
+    case .chat:
+      if poroController.isChatExpanded {
+        return PoroTheme.expandedSurfaceHeight
+      }
+
+      return poroController.isFocusSessionActive
+        ? PoroTheme.activeSessionCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
+    case .focusSetup:
+      return PoroTheme.focusSetupHeight
+    case .summary:
+      return PoroTheme.summaryHeight
+    }
+  }
+
+  private var surfaceHeight: CGFloat {
+    switch poroController.panelRoute {
+    case .chat:
+      return poroController.isChatExpanded ? PoroTheme.expandedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
+    case .focusSetup:
+      return PoroTheme.focusSetupHeight
+    case .summary:
+      return PoroTheme.summaryHeight
+    }
   }
 
   var body: some View {
-    VStack(spacing: isExpanded ? 0 : 12) {
+    VStack(spacing: showsFooterStrip ? 12 : 0) {
       surface
         .frame(width: PoroTheme.width, height: surfaceHeight, alignment: .top)
 
-      if !isExpanded {
-        HintView()
+      if showsFooterStrip {
+        footerStrip
           .transition(.opacity)
       }
     }
     .frame(width: PoroTheme.width, height: totalHeight, alignment: .top)
     .background(Color.clear)
     .preferredColorScheme(.dark)
-    .animation(PoroTheme.shellAnimation, value: isExpanded)
-    .animation(PoroTheme.fadeAnimation, value: chatController.errorMessage)
+    .animation(PoroTheme.shellAnimation, value: poroController.panelRoute)
+    .animation(PoroTheme.shellAnimation, value: poroController.isChatExpanded)
+    .animation(PoroTheme.fadeAnimation, value: poroController.composerHint)
     .onAppear {
-      onExpansionChange(isExpanded)
+      onPanelHeightChange(totalHeight)
       focusInputSoon()
     }
-    .onChange(of: isExpanded) { _, expanded in
-      onExpansionChange(expanded)
+    .onChange(of: totalHeight) { _, height in
+      onPanelHeightChange(height)
     }
     .onReceive(NotificationCenter.default.publisher(for: .assistantWindowDidShow)) { _ in
       focusInputSoon()
@@ -66,45 +80,18 @@ struct ContentView: View {
       HUDMaterialView()
       PoroTheme.windowTint
 
-      VStack(spacing: 0) {
-        if isExpanded {
-          TopToolbarView(
-            onNewConversation: startNewConversation,
-            onHistory: {},
-            onSettings: {}
-          )
-          .padding(.top, 8)
-          .transition(.opacity.combined(with: .move(edge: .top)))
-
-          MessagesListView(
-            messages: chatController.messages,
-            isStreaming: chatController.isSending
-          )
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-          if let errorMessage = chatController.errorMessage {
-            Text(errorMessage)
-              .font(.system(size: 12, weight: .medium))
-              .foregroundStyle(PoroTheme.stopColor)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(.horizontal, 20)
-              .padding(.bottom, 10)
-              .transition(.opacity)
+      switch poroController.panelRoute {
+      case .chat:
+        chatSurface
+      case .focusSetup:
+        FocusSetupView(poroController: poroController)
+      case .summary:
+        if let summary = poroController.focusSessionController.latestSummary {
+          SessionSummaryView(summary: summary) {
+            poroController.dismissSummary()
+            onDismissRequest()
           }
-
-          Rectangle()
-            .fill(PoroTheme.divider)
-            .frame(height: 1)
-            .transition(.opacity)
         }
-
-        InputRowView(
-          draft: $draftMessage,
-          isFocused: $isInputFocused,
-          isStreaming: chatController.isSending,
-          onSubmit: submitCurrentDraft,
-          onStop: chatController.stopStreaming
-        )
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: PoroTheme.windowCornerRadius, style: .continuous))
@@ -117,38 +104,125 @@ struct ContentView: View {
     .shadow(color: .black.opacity(0.50), radius: 0.5)
   }
 
-  private func submitCurrentDraft() {
-    let text = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+  private var chatSurface: some View {
+    VStack(spacing: 0) {
+      if poroController.isChatExpanded {
+        TopToolbarView(
+          onNewConversation: poroController.chatController.startNewConversation,
+          onHistory: {},
+          onSettings: {},
+          statusLine: poroController.sessionStatusLine,
+          onEndSession: poroController.isFocusSessionActive ? {
+            _ = poroController.focusSessionController.handleSessionCommand(.end)
+            poroController.panelRoute = .summary
+          } : nil
+        )
+        .padding(.top, 8)
+        .transition(.opacity.combined(with: .move(edge: .top)))
 
-    guard !text.isEmpty, chatController.canSendMessage else {
-      return
+        MessagesListView(
+          messages: poroController.chatController.messages,
+          isStreaming: poroController.chatController.isSending
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        if let errorMessage = poroController.chatController.errorMessage {
+          Text(errorMessage)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(PoroTheme.stopColor)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 10)
+            .transition(.opacity)
+        }
+
+        Rectangle()
+          .fill(PoroTheme.divider)
+          .frame(height: 1)
+          .transition(.opacity)
+      }
+
+      InputRowView(
+        draft: $poroController.composerDraft,
+        isFocused: $isInputFocused,
+        isStreaming: poroController.chatController.isSending,
+        onSubmit: poroController.submitComposer,
+        onStop: poroController.chatController.stopStreaming
+      )
+      .onChange(of: poroController.composerDraft) { _, draft in
+        poroController.updateComposerDraft(draft)
+      }
     }
-
-    draftMessage = ""
-    chatController.send(text)
   }
 
-  private func startNewConversation() {
-    chatController.startNewConversation()
-    draftMessage = ""
-    focusInputSoon()
+  private var showsFooterStrip: Bool {
+    poroController.panelRoute == .chat && !poroController.isChatExpanded
+  }
+
+  @ViewBuilder
+  private var footerStrip: some View {
+    if let composerHint = poroController.composerHint {
+      ComposerHintStripView(title: composerHint.title)
+    } else if poroController.isFocusSessionActive, let statusLine = poroController.sessionStatusLine {
+      SessionStatusStripView(statusLine: statusLine)
+    } else {
+      HintView()
+    }
   }
 
   private func handleEscape() {
-    if chatController.isSending {
-      chatController.stopStreaming()
-    } else {
+    switch poroController.panelRoute {
+    case .chat:
+      if poroController.chatController.isSending {
+        poroController.chatController.stopStreaming()
+      } else {
+        onDismissRequest()
+      }
+    case .focusSetup:
+      poroController.cancelFocusSetup()
+    case .summary:
       onDismissRequest()
     }
   }
 
   private func focusInputSoon() {
+    guard poroController.panelRoute == .chat else {
+      return
+    }
+
     DispatchQueue.main.async {
       isInputFocused = true
     }
   }
 }
 
+private struct ComposerHintStripView: View {
+  let title: String
+
+  var body: some View {
+    Text(title)
+      .font(.system(size: 12, weight: .medium))
+      .foregroundStyle(PoroTheme.accent)
+  }
+}
+
+private struct SessionStatusStripView: View {
+  let statusLine: String
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Circle()
+        .fill(PoroTheme.accent)
+        .frame(width: 8, height: 8)
+
+      Text(statusLine)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(Color.white.opacity(0.44))
+        .lineLimit(1)
+    }
+  }
+}
+
 #Preview {
-  ContentView()
+  ContentView(poroController: PoroController())
 }

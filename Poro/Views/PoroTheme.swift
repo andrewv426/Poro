@@ -4,6 +4,9 @@ enum PoroTheme {
   static let width: CGFloat = 560
   static let collapsedSurfaceHeight: CGFloat = 56
   static let collapsedTotalHeight: CGFloat = 88
+  static let activeSessionCollapsedTotalHeight: CGFloat = 92
+  static let focusSetupHeight: CGFloat = 252
+  static let summaryHeight: CGFloat = 330
   static let expandedSurfaceHeight: CGFloat = 480
   static let topAnchorRatio: CGFloat = 0.30
   static let windowCornerRadius: CGFloat = 14

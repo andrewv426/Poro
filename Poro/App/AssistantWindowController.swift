@@ -4,16 +4,19 @@ import SwiftUI
 @MainActor
 final class AssistantWindowController {
   private let panel: FloatingAssistantPanel
-  private let chatController = ChatController()
-  private var isExpanded = false
+  private let poroController: PoroController
+  private var currentTotalHeight: CGFloat
 
-  init() {
+  init(poroController: PoroController) {
+    self.poroController = poroController
+    currentTotalHeight = PoroTheme.collapsedTotalHeight
+
     panel = FloatingAssistantPanel(
       contentRect: NSRect(
         x: 0,
         y: 0,
         width: PoroTheme.width,
-        height: PoroTheme.collapsedTotalHeight
+        height: currentTotalHeight
       ),
       styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
       backing: .buffered,
@@ -30,21 +33,29 @@ final class AssistantWindowController {
     panel.isMovableByWindowBackground = false
     panel.contentViewController = NSHostingController(
       rootView: ContentView(
-        chatController: chatController,
+        poroController: poroController,
         onDismissRequest: { [weak self] in
           self?.hide(animated: true)
         },
-        onExpansionChange: { [weak self] expanded in
-          self?.setExpanded(expanded, animated: true)
+        onPanelHeightChange: { [weak self] totalHeight in
+          self?.setPanelHeight(totalHeight, animated: true)
         }
       )
     )
+
+    poroController.onDismissRequested = { [weak self] in
+      self?.hide(animated: true)
+    }
+    poroController.onPresentRequested = { [weak self] in
+      self?.show()
+    }
 
     applyFrame(animated: false)
     panel.orderOut(nil)
   }
 
   func show() {
+    poroController.prepareForPresentation()
     let targetFrame = frameForCurrentState()
     var startFrame = targetFrame
     startFrame.origin.y += 8
@@ -100,12 +111,12 @@ final class AssistantWindowController {
     }
   }
 
-  private func setExpanded(_ expanded: Bool, animated: Bool) {
-    guard isExpanded != expanded else {
+  private func setPanelHeight(_ totalHeight: CGFloat, animated: Bool) {
+    guard abs(currentTotalHeight - totalHeight) > 0.5 else {
       return
     }
 
-    isExpanded = expanded
+    currentTotalHeight = totalHeight
     applyFrame(animated: animated)
   }
 
@@ -126,11 +137,10 @@ final class AssistantWindowController {
 
   private func frameForCurrentState() -> NSRect {
     let screenFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-    let height = isExpanded ? PoroTheme.expandedSurfaceHeight : PoroTheme.collapsedTotalHeight
     let x = screenFrame.midX - (PoroTheme.width / 2)
     let top = screenFrame.maxY - (screenFrame.height * PoroTheme.topAnchorRatio)
-    let y = top - height
+    let y = top - currentTotalHeight
 
-    return NSRect(x: x, y: y, width: PoroTheme.width, height: height)
+    return NSRect(x: x, y: y, width: PoroTheme.width, height: currentTotalHeight)
   }
 }

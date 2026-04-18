@@ -1,0 +1,24 @@
+import Foundation
+
+enum PanelRoute: Equatable {
+  case chat
+  case focusSetup
+  case summary
+}
+
+enum SessionCommand: Equatable {
+  case pause
+  case resume
+  case end
+  case status
+}
+
+enum AppIntent: Equatable {
+  case chat(String)
+  case startFocus(FocusStartDraft)
+  case sessionCommand(SessionCommand)
+}
+
+struct ComposerHint: Equatable {
+  let title: String
+}

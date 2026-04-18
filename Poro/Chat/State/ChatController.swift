@@ -98,6 +98,22 @@ final class ChatController {
     streamTask?.cancel()
   }
 
+  func appendLocalExchange(userText: String, assistantText: String) {
+    let trimmedText = userText.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedReply = assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !trimmedText.isEmpty, !trimmedReply.isEmpty else {
+      return
+    }
+
+    streamTask?.cancel()
+    streamTask = nil
+    currentAssistantMessageID = nil
+    requestState = .idle
+    session.appendUserMessage(trimmedText)
+    session.appendAssistantMessage(trimmedReply)
+  }
+
   func startNewConversation() {
     streamTask?.cancel()
     streamTask = nil
