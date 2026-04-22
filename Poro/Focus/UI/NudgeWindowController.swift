@@ -22,6 +22,7 @@ final class NudgeWindowController {
     panel.hasShadow = false
     panel.hidesOnDeactivate = false
     panel.isMovableByWindowBackground = false
+    panel.becomesKeyOnlyIfNeeded = true
     panel.contentViewController = NSHostingController(
       rootView: FocusNudgeView(focusSessionController: focusSessionController)
     )
@@ -38,7 +39,7 @@ final class NudgeWindowController {
 
   func show() {
     guard let screenFrame = NSScreen.main?.visibleFrame else {
-      panel.makeKeyAndOrderFront(nil)
+      panel.orderFrontRegardless()
       return
     }
 
@@ -48,8 +49,7 @@ final class NudgeWindowController {
     let y = screenFrame.maxY - height - 32
     panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
     panel.alphaValue = 1
-    panel.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)
+    panel.orderFrontRegardless()
   }
 
   func hide() {

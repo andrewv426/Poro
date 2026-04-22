@@ -33,9 +33,26 @@ final class PoroController {
   }
 
   convenience init() {
+    let focusSessionController = FocusSessionController()
+    let chatController: ChatController
+
+    do {
+      let configuration = try LLMConfiguration.loadFromEnvironment()
+      let toolbox = FocusReadToolbox(focusSessionController: focusSessionController)
+      chatController = ChatController(
+        session: ChatSession(),
+        llmClient: CerebrasLLMClient(configuration: configuration, toolbox: toolbox)
+      )
+    } catch {
+      chatController = ChatController(
+        session: ChatSession(),
+        llmClient: UnavailableLLMClient(error: error)
+      )
+    }
+
     self.init(
-      chatController: ChatController(),
-      focusSessionController: FocusSessionController(),
+      chatController: chatController,
+      focusSessionController: focusSessionController,
       intentRouter: AppIntentRouter()
     )
   }

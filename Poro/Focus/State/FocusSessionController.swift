@@ -531,4 +531,76 @@ final class FocusSessionController {
     formatter.dateStyle = .none
     return formatter.string(from: date)
   }
+
+  func hasAssistantContextForTools() -> Bool {
+    hasActiveSession || latestSummary != nil || !nudgeEvents.isEmpty
+  }
+
+  func focusSessionStateSnapshot() -> FocusSessionStateToolResult {
+    FocusSessionStateToolResult(
+      isActive: hasActiveSession,
+      isPaused: isPaused,
+      goal: activeSession?.goal,
+      remainingMinutes: hasActiveSession ? max(1, remainingSeconds / 60) : nil,
+      remainingTimeText: hasActiveSession ? remainingTimeText : nil,
+      startedAt: activeSession?.startedAt,
+      overrideEndsAt: isOverrideActive ? overrideEndsAt : nil
+    )
+  }
+
+  func currentActivitySnapshot() -> CurrentActivityToolResult {
+    CurrentActivityToolResult(
+      applicationName: lastSeenActivity?.applicationName,
+      bundleIdentifier: lastSeenActivity?.bundleIdentifier,
+      pageURL: lastSeenActivity?.pageURL?.absoluteString,
+      pageHost: lastSeenActivity?.pageHost
+    )
+  }
+
+  func recentDriftEventsSnapshot(limit: Int = 5) -> RecentDriftEventsToolResult {
+    RecentDriftEventsToolResult(
+      events: Array(nudgeEvents.suffix(limit)).map { event in
+        .init(
+          occurredAt: event.occurredAt,
+          applicationName: event.applicationName,
+          justification: event.justification,
+          outcome: describeOutcome(event.outcome)
+        )
+      }
+    )
+  }
+
+  func sessionStatsSnapshot() -> SessionStatsToolResult {
+    let allowedOverrideCount = nudgeEvents.filter {
+      if case .allowed = $0.outcome {
+        return true
+      }
+      return false
+    }.count
+
+    return SessionStatsToolResult(
+      isActive: hasActiveSession,
+      goal: activeSession?.goal,
+      elapsedMinutes: activeSession.map { session in
+        max(0, session.durationMinutes - (remainingSeconds / 60))
+      },
+      remainingMinutes: hasActiveSession ? max(1, remainingSeconds / 60) : nil,
+      remainingTimeText: hasActiveSession ? remainingTimeText : nil,
+      nudgeCount: nudgeEvents.count,
+      allowedOverrideCount: allowedOverrideCount,
+      deniedOverrideCount: nudgeEvents.filter { $0.outcome == .denied }.count,
+      topDistractions: topDistractions(from: nudgeEvents)
+    )
+  }
+
+  private func describeOutcome(_ outcome: NudgeEvent.Outcome) -> String {
+    switch outcome {
+    case .backToWork:
+      return "back_to_work"
+    case .allowed(let minutes):
+      return "allowed_\(minutes)_minutes"
+    case .denied:
+      return "denied"
+    }
+  }
 }

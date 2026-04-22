@@ -7,6 +7,7 @@ enum LLMError: LocalizedError {
   case invalidResponse
   case unexpectedStatusCode(Int, String?)
   case emptyResponse
+  case toolExecutionFailure(String)
 
   var errorDescription: String? {
     switch self {
@@ -36,6 +37,8 @@ enum LLMError: LocalizedError {
       return "Cerebras request failed with status code \(statusCode)."
     case .emptyResponse:
       return "Cerebras returned an empty response."
+    case .toolExecutionFailure(let message):
+      return "Tool execution failed: \(message)"
     }
   }
 }
