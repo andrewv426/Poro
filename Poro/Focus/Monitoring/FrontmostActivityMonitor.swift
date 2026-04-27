@@ -31,7 +31,7 @@ final class FrontmostActivityMonitor {
           return
         }
 
-        self.emit(self.activityFor(app))
+        self.handleActivatedApplication(app)
       }
     }
 
@@ -78,7 +78,11 @@ final class FrontmostActivityMonitor {
       return
     }
 
-    emit(enrichedActivity(from: baseActivity, browser: browser))
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      let activity = await self.enrichedActivity(from: baseActivity, browser: browser)
+      self.emit(activity)
+    }
     startBrowserPolling(for: browser, processIdentifier: application.processIdentifier)
   }
 
@@ -105,12 +109,11 @@ final class FrontmostActivityMonitor {
           return
         }
 
-        self.emit(
-          self.enrichedActivity(
-            from: self.activityFor(frontmostApplication),
-            browser: activeBrowser
-          )
+        let activity = await self.enrichedActivity(
+          from: self.activityFor(frontmostApplication),
+          browser: activeBrowser
         )
+        self.emit(activity)
       }
     }
   }
@@ -118,12 +121,19 @@ final class FrontmostActivityMonitor {
   private func enrichedActivity(
     from activity: ActivityContext,
     browser: BrowserTabContextProvider.BrowserApp
-  ) -> ActivityContext {
-    ActivityContext(
+  ) async -> ActivityContext {
+    let tabSnapshot = await browserContextProvider.activeTabSnapshot(
+      for: browser,
+      processIdentifier: activity.processIdentifier
+    )
+
+    return ActivityContext(
       applicationName: activity.applicationName,
       bundleIdentifier: activity.bundleIdentifier,
       processIdentifier: activity.processIdentifier,
-      pageURL: browserContextProvider.activeTabURL(for: browser)
+      pageURL: tabSnapshot.url,
+      pageTitle: tabSnapshot.title,
+      pageAccessError: tabSnapshot.errorDescription
     )
   }
 }

@@ -20,18 +20,36 @@ struct CerebrasLLMClient: LLMClient, Sendable {
     onDelta: @escaping @MainActor @Sendable (String) -> Void
   ) async throws {
     if let toolbox, await toolbox.shouldOfferTools(for: messages) {
+      let latestUserMessage = messages.reversed().first { message in
+        if case .user = message.role {
+          return true
+        }
+
+        return false
+      }?.text ?? ""
+
+      await toolbox.recordToolEvent(
+        phase: "tool_mode_selected",
+        toolName: nil,
+        detail: latestUserMessage
+      )
       try await completeWithTools(messages: messages, toolbox: toolbox, onDelta: onDelta)
       return
     }
 
-    try await streamPlainCompletion(messages: messages, onDelta: onDelta)
+    try await streamPlainCompletion(
+      messages: messages,
+      systemPrompt: toolbox?.systemPrompt,
+      onDelta: onDelta
+    )
   }
 
   private func streamPlainCompletion(
     messages: [ChatMessage],
+    systemPrompt: String? = nil,
     onDelta: @escaping @MainActor @Sendable (String) -> Void
   ) async throws {
-    let requestMessages = makeRequestMessages(from: messages)
+    let requestMessages = makeRequestMessages(from: messages, systemPrompt: systemPrompt)
     let requestBody = StreamChatCompletionsRequest(
       model: configuration.model,
       messages: requestMessages,
@@ -108,6 +126,11 @@ struct CerebrasLLMClient: LLMClient, Sendable {
       }
 
       if let toolCalls = assistantMessage.toolCalls, !toolCalls.isEmpty {
+        await toolbox.recordToolEvent(
+          phase: "structured_tool_calls_received",
+          toolName: toolCalls.map(\.function.name).joined(separator: ", "),
+          detail: assistantMessage.content ?? ""
+        )
         try await appendToolRound(
           toolCalls: toolCalls,
           assistantContent: assistantMessage.content,
@@ -122,6 +145,11 @@ struct CerebrasLLMClient: LLMClient, Sendable {
         let content = assistantMessage.content,
         let pseudoToolCall = parsePseudoToolCall(from: content, validToolNames: toolbox.toolDefinitions.map(\.name))
       {
+        await toolbox.recordToolEvent(
+          phase: "pseudo_tool_call_fallback",
+          toolName: pseudoToolCall.function.name,
+          detail: content
+        )
         try await appendToolRound(
           toolCalls: [pseudoToolCall],
           assistantContent: nil,
@@ -134,6 +162,11 @@ struct CerebrasLLMClient: LLMClient, Sendable {
       if let content = assistantMessage.content?.trimmingCharacters(in: .whitespacesAndNewlines),
         !content.isEmpty
       {
+        await toolbox.recordToolEvent(
+          phase: "assistant_final_response",
+          toolName: nil,
+          detail: content
+        )
         await MainActor.run {
           onDelta(content)
         }
@@ -283,7 +316,17 @@ struct CerebrasLLMClient: LLMClient, Sendable {
     from content: String,
     validToolNames: [String]
   ) -> ResponseToolCall? {
-    let loweredContent = content.lowercased()
+    let normalizedContent = normalizedToolCallContent(from: content)
+    let loweredContent = normalizedContent.lowercased()
+
+    if
+      let jsonToolCall = parseJSONToolCall(
+        from: normalizedContent,
+        validToolNames: validToolNames
+      )
+    {
+      return jsonToolCall
+    }
 
     guard loweredContent.contains("function") || loweredContent.contains("tool") else {
       return nil
@@ -299,10 +342,10 @@ struct CerebrasLLMClient: LLMClient, Sendable {
 
     if
       let parametersRange = loweredContent.range(of: "parameters"),
-      let jsonStart = content[parametersRange.upperBound...].firstIndex(of: "{"),
-      let jsonEnd = content[jsonStart...].lastIndex(of: "}")
+      let jsonStart = normalizedContent[parametersRange.upperBound...].firstIndex(of: "{"),
+      let jsonEnd = normalizedContent[jsonStart...].lastIndex(of: "}")
     {
-      arguments = String(content[jsonStart...jsonEnd])
+      arguments = String(normalizedContent[jsonStart...jsonEnd])
     } else {
       arguments = "{}"
     }
@@ -311,6 +354,64 @@ struct CerebrasLLMClient: LLMClient, Sendable {
       id: UUID().uuidString,
       type: "function",
       function: .init(name: matchedToolName, arguments: arguments)
+    )
+  }
+
+  private func normalizedToolCallContent(from content: String) -> String {
+    let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard trimmed.hasPrefix("```"), trimmed.hasSuffix("```") else {
+      return trimmed
+    }
+
+    let lines = trimmed.components(separatedBy: .newlines)
+
+    guard lines.count >= 3 else {
+      return trimmed
+    }
+
+    return lines.dropFirst().dropLast().joined(separator: "\n").trimmingCharacters(
+      in: .whitespacesAndNewlines
+    )
+  }
+
+  private func parseJSONToolCall(
+    from content: String,
+    validToolNames: [String]
+  ) -> ResponseToolCall? {
+    guard let data = content.data(using: .utf8) else {
+      return nil
+    }
+
+    guard
+      let jsonObject = try? JSONSerialization.jsonObject(with: data),
+      let dictionary = jsonObject as? [String: Any]
+    else {
+      return nil
+    }
+
+    let name = (dictionary["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard let name, validToolNames.contains(name) else {
+      return nil
+    }
+
+    let argumentsObject = dictionary["arguments"] ?? [:]
+    guard JSONSerialization.isValidJSONObject(argumentsObject) else {
+      return nil
+    }
+
+    guard
+      let argumentsData = try? JSONSerialization.data(withJSONObject: argumentsObject),
+      let arguments = String(data: argumentsData, encoding: .utf8)
+    else {
+      return nil
+    }
+
+    return ResponseToolCall(
+      id: UUID().uuidString,
+      type: "function",
+      function: .init(name: name, arguments: arguments)
     )
   }
 }

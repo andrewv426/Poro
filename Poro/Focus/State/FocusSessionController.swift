@@ -18,6 +18,7 @@ final class FocusSessionController {
   private(set) var currentNudge: NudgeContext?
   private(set) var latestSummary: SessionSummary?
   private(set) var overrideEndsAt: Date?
+  private(set) var activityLog: [ActivityLogEntry] = []
 
   var onNudgeChange: ((NudgeContext?) -> Void)?
   var onSessionStateChange: (() -> Void)?
@@ -48,6 +49,8 @@ final class FocusSessionController {
     activityMonitor.onActivityChange = { [weak self] activity in
       self?.handleActivityChange(activity)
     }
+
+    activityMonitor.start()
   }
 
   convenience init() {
@@ -144,6 +147,7 @@ final class FocusSessionController {
     latestSummary = nil
     overrideEndsAt = nil
     nudgeEvents.removeAll()
+    activityLog.removeAll()
     lastProductiveActivity = nil
     lastSeenActivity = nil
     pendingNudgeActivity = nil
@@ -353,11 +357,12 @@ final class FocusSessionController {
   }
 
   private func handleActivityChange(_ activity: ActivityContext) {
-    lastSeenActivity = activity
-
     guard activity.bundleIdentifier != Bundle.main.bundleIdentifier else {
       return
     }
+
+    lastSeenActivity = activity
+    updateActivityLog(with: activity)
 
     guard let session = activeSession, state == .active else {
       return
@@ -517,6 +522,46 @@ final class FocusSessionController {
     notifyNudgeChange()
   }
 
+  private func updateActivityLog(with activity: ActivityContext) {
+    if let lastEntry = activityLog.last, lastEntry.isSameActivity(as: activity) {
+      return
+    }
+
+    let now = Date()
+    if !activityLog.isEmpty {
+      activityLog[activityLog.count - 1].endedAt = now
+    }
+
+    let newEntry = ActivityLogEntry(
+      applicationName: activity.applicationName,
+      pageURL: activity.pageURL,
+      pageTitle: activity.pageTitle,
+      startedAt: now,
+      endedAt: nil
+    )
+    activityLog.append(newEntry)
+
+    if activityLog.count > 50 {
+      activityLog.removeFirst()
+    }
+  }
+
+  func activityLogSnapshot() -> String {
+    guard !activityLog.isEmpty else {
+      return "No activity recorded yet."
+    }
+
+    let formatter = DateComponentsFormatter()
+    formatter.allowedUnits = [.hour, .minute, .second]
+    formatter.unitsStyle = .abbreviated
+
+    return activityLog.map { entry in
+      let timeStr = formatter.string(from: entry.duration) ?? "\(Int(entry.duration))s"
+      let location = entry.pageTitle ?? entry.pageURL?.host?.lowercased() ?? entry.applicationName
+      return "- \(location) (\(timeStr))"
+    }.joined(separator: "\n")
+  }
+
   private func notifyNudgeChange() {
     onNudgeChange?(currentNudge)
   }
@@ -553,7 +598,9 @@ final class FocusSessionController {
       applicationName: lastSeenActivity?.applicationName,
       bundleIdentifier: lastSeenActivity?.bundleIdentifier,
       pageURL: lastSeenActivity?.pageURL?.absoluteString,
-      pageHost: lastSeenActivity?.pageHost
+      pageHost: lastSeenActivity?.pageHost,
+      pageTitle: lastSeenActivity?.pageTitle,
+      pageAccessError: lastSeenActivity?.pageAccessError
     )
   }
 
