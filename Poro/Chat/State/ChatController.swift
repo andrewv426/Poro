@@ -122,6 +122,35 @@ final class ChatController {
     session.clear()
   }
 
+  /// Injects a visible user bubble and streams a response using a richer LLM prompt.
+  /// The display bubble shows `userText`; the LLM receives `assistantPrompt` instead.
+  func injectDistractionExchange(userText: String, assistantPrompt: String) {
+    guard canSendMessage else { return }
+    requestState = .idle
+    session.appendUserMessage(userText)
+    let assistantMessageID = session.appendAssistantPlaceholder()
+    currentAssistantMessageID = assistantMessageID
+    requestState = .sending
+
+    // Build a synthetic message list: history before this exchange, then the richer prompt.
+    let historyBeforeInjection = Array(session.messages.dropLast(2))
+    let syntheticMessages = historyBeforeInjection + [ChatMessage(role: .user, text: assistantPrompt)]
+
+    streamTask = Task { [weak self, session, llmClient] in
+      guard let self else { return }
+      do {
+        try await llmClient.streamCompletion(messages: syntheticMessages) { delta in
+          session.appendText(delta, toMessageWithID: assistantMessageID)
+        }
+        self.finishStreaming()
+      } catch is CancellationError {
+        self.handleStreamCancellation(forMessageWithID: assistantMessageID)
+      } catch {
+        self.handleStreamFailure(error, forMessageWithID: assistantMessageID)
+      }
+    }
+  }
+
   private func userFacingMessage(for error: Error) -> String {
     if let localizedError = error as? LocalizedError,
       let description = localizedError.errorDescription,

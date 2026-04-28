@@ -5,7 +5,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var poroController: PoroController?
   private var assistantWindowController: AssistantWindowController?
   private var statusItemController: StatusItemController?
-  private var nudgeWindowController: NudgeWindowController?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     let poroController = PoroController()
@@ -18,13 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusSessionController: focusSessionController
       ) { [weak self] in
         Task { @MainActor in
-          self?.assistantWindowController?.show()
+          self?.assistantWindowController?.showFocusPanel()
         }
       }
-
-      nudgeWindowController = NudgeWindowController(
-        focusSessionController: focusSessionController
-      )
     }
 
     KeyboardShortcuts.setShortcut(

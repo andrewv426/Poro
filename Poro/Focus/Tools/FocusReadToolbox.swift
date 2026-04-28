@@ -16,18 +16,14 @@ struct FocusReadToolbox: AssistantToolbox, Sendable {
     You are a focus coach and general assistant integrated into a macOS app called Poro.
     The user invokes you via a hotkey, and you respond to whatever they ask.
 
-    When the user has an active focus session, you have access to tools that let you inspect their session state, current activity, activity log, and drift history. Use these tools liberally whenever session context might be relevant.
+    Below is the current [SYSTEM_CONTEXT] from the user's computer. Use this information to answer the user's question accurately.
+    Never mention the words 'context', 'tool', 'JSON', or 'system' to the user.
+    Synthesize the information into a natural, warm, and direct response. Speak like a coach.
 
-    - If the user asks how they are doing, how much time is left, what they have been up to, or similar status questions: call get_session_stats and get_focus_session_state.
-    - If the user asks about their current activity, what tab they are on, or where they are: call get_current_activity.
-    - If the user asks for a summary of their activity, what they have been doing recently, or their session history: call get_activity_log.
-    - If the user is reflecting on the session or asking for coaching advice: call get_recent_drift_events to ground your response in what actually happened.
-    - If the user asks a general question unrelated to their session, do not call session tools.
+    [SYSTEM_CONTEXT]
+    {{CONTEXT}}
 
-    When you receive tool results, synthesize them into a natural response. Do not dump raw data. Speak like a coach: warm, direct, brief.
-    Never mention tool names, function syntax, JSON, or parameters to the user. If you decide session context is relevant, call the tool instead of describing the call.
-    For current activity questions, never guess a page, tab, site, or title. Only report the app, URL, host, or page title that the tool explicitly returned. If the tool only gives you the app name or reports a page access error, say that directly and do not infer beyond it.
-    If there is no active focus session and the user's question implied a session, clarify that there is no session running right now and ask whether they want to start one.
+    If the [SYSTEM_CONTEXT] reports that there is no active focus session and the user's question implies one, clarify that there is no session running right now and ask whether they want to start one.
     """
 
   let toolDefinitions: [AssistantToolDefinition] = [
@@ -144,8 +140,40 @@ struct FocusReadToolbox: AssistantToolbox, Sendable {
       return true
     }
 
-    return focusSessionController.hasAssistantContextForTools()
+    return await focusSessionController.hasAssistantContextForTools()
       && ["how", "what", "why"].contains(where: latestUserMessage.contains)
+  }
+
+  /// Aggregates all relevant session and activity data into a single string for eager injection.
+  func fetchAllContext() async -> String {
+    let state = await focusSessionController.focusSessionStateSnapshot()
+    let activity = await focusSessionController.currentActivitySnapshot()
+    let stats = await focusSessionController.sessionStatsSnapshot()
+    let log = await focusSessionController.activityLogSnapshot()
+
+    var context = ""
+    context += "Session Active: \(state.isActive)\n"
+    if state.isActive {
+      context += "Goal: \(state.goal ?? "None")\n"
+      context += "Status: \(state.isPaused ? "Paused" : "Running")\n"
+      context += "Time Remaining: \(state.remainingTimeText ?? "Unknown")\n"
+      context += "Recent Stats: \(stats.nudgeCount) nudges, \(stats.allowedOverrideCount) allowed, \(stats.deniedOverrideCount) denied\n"
+    }
+
+    context += "Current App: \(activity.applicationName ?? "Unknown")\n"
+    if let title = activity.pageTitle {
+      context += "Active Tab Title: \(title)\n"
+    }
+    if let url = activity.pageURL {
+      context += "Active Tab URL: \(url)\n"
+    }
+    if let error = activity.pageAccessError {
+      context += "Browser Access Note: \(error)\n"
+    }
+
+    context += "\nActivity Log (Recent):\n\(log)\n"
+
+    return context
   }
 
   func executeTool(named name: String, argumentsJSON: String) async throws -> String {
@@ -158,15 +186,20 @@ struct FocusReadToolbox: AssistantToolbox, Sendable {
 
     switch name {
     case "get_focus_session_state":
-      encodedPayload = try encode(focusSessionController.focusSessionStateSnapshot())
+      let snapshot = await focusSessionController.focusSessionStateSnapshot()
+      encodedPayload = try encode(snapshot)
     case "get_current_activity":
-      encodedPayload = try encode(focusSessionController.currentActivitySnapshot())
+      let snapshot = await focusSessionController.currentActivitySnapshot()
+      encodedPayload = try encode(snapshot)
     case "get_recent_drift_events":
-      encodedPayload = try encode(focusSessionController.recentDriftEventsSnapshot())
+      let snapshot = await focusSessionController.recentDriftEventsSnapshot()
+      encodedPayload = try encode(snapshot)
     case "get_session_stats":
-      encodedPayload = try encode(focusSessionController.sessionStatsSnapshot())
+      let snapshot = await focusSessionController.sessionStatsSnapshot()
+      encodedPayload = try encode(snapshot)
     case "get_activity_log":
-      encodedPayload = try encode(ActivityLogToolResult(log: focusSessionController.activityLogSnapshot()))
+      let log = await focusSessionController.activityLogSnapshot()
+      encodedPayload = try encode(ActivityLogToolResult(log: log))
     case "get_tool_call_log":
       encodedPayload = try encode(ToolCallLogToolResult(entries: await toolLog.snapshot()))
     default:

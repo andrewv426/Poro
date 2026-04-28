@@ -2,9 +2,12 @@ import AppKit
 import Foundation
 import Observation
 
+/// The primary coordinator for focus session state, activity monitoring, and distraction handling.
 @Observable
 @MainActor
 final class FocusSessionController {
+  
+  /// Possible states for a focus session.
   enum State: Equatable {
     case idle
     case active
@@ -14,27 +17,31 @@ final class FocusSessionController {
 
   private(set) var state: State = .idle
   private(set) var activeSession: FocusSession?
-  private(set) var remainingSeconds: Int = 0
-  private(set) var currentNudge: NudgeContext?
   private(set) var latestSummary: SessionSummary?
+  private var isNudgeActive: Bool = false
   private(set) var overrideEndsAt: Date?
-  private(set) var activityLog: [ActivityLogEntry] = []
 
-  var onNudgeChange: ((NudgeContext?) -> Void)?
+  // Callbacks for UI and state updates.
+  var onDistractionDetected: ((ActivityContext) -> Void)?
   var onSessionStateChange: (() -> Void)?
+  var onStatusItemUpdate: (() -> Void)?
   var onSummaryAvailable: ((SessionSummary) -> Void)?
 
+  // Internal managers and monitors.
   private let decisionClient: FocusDecisionEvaluating
   private let activityMonitor: FrontmostActivityMonitor
   private let driftWatchdog: DriftWatchdog
   private let distractionPolicy: DistractionPolicy
+  private let timer = FocusTimer()
+  private let logger = SessionActivityLogger()
 
-  private var countdownTimer: Timer?
+  // Internal state for activity tracking.
   private var nudgeEvents: [NudgeEvent] = []
   private var lastProductiveActivity: ActivityContext?
   private var lastSeenActivity: ActivityContext?
   private var pendingNudgeActivity: ActivityContext?
 
+  /// Initializes the controller and starts the activity monitor.
   init(
     decisionClient: FocusDecisionEvaluating,
     activityMonitor: FrontmostActivityMonitor,
@@ -46,13 +53,26 @@ final class FocusSessionController {
     self.driftWatchdog = driftWatchdog
     self.distractionPolicy = distractionPolicy
 
+    // Wire up activity monitoring.
     activityMonitor.onActivityChange = { [weak self] activity in
       self?.handleActivityChange(activity)
     }
+    
+    // Wire up timer events.
+    timer.onTick = { [weak self] _ in
+      self?.tick()
+    }
+    timer.onComplete = { [weak self] in
+      if let session = self?.activeSession {
+        self?.finishSession(session: session)
+      }
+    }
 
+    // Begin monitoring frontmost app activity immediately.
     activityMonitor.start()
   }
 
+  /// Convenience initializer with standard dependencies.
   convenience init() {
     let decisionClient: FocusDecisionEvaluating
 
@@ -71,22 +91,27 @@ final class FocusSessionController {
     )
   }
 
+  // MARK: - Computed Properties
+
+  /// Whether a focus session is currently running and not yet finished.
   var hasActiveSession: Bool {
     activeSession != nil && state != .completed
   }
 
+  /// Whether the current session is paused.
   var isPaused: Bool {
     state == .paused
   }
 
+  /// Whether a temporary override (granted distraction) is currently in effect.
   var isOverrideActive: Bool {
     guard let overrideEndsAt else {
       return false
     }
-
     return overrideEndsAt > Date()
   }
 
+  /// Human-readable text for the main status display.
   var statusLine: String? {
     guard let session = activeSession else {
       return nil
@@ -94,13 +119,12 @@ final class FocusSessionController {
 
     switch state {
     case .paused:
-      return "Paused • \(remainingTimeText) left"
+      return "Paused • \(timer.remainingTimeText) left"
     case .active:
       if isOverrideActive, let overrideEndsAt {
-        return "Override until \(timeString(for: overrideEndsAt)) • \(remainingTimeText) left"
+        return "Override until \(timeString(for: overrideEndsAt)) • \(timer.remainingTimeText) left"
       }
-
-      return "\(remainingTimeText) left • \(session.goal)"
+      return "\(timer.remainingTimeText) left • \(session.goal)"
     case .completed:
       return "Session complete"
     case .idle:
@@ -108,30 +132,21 @@ final class FocusSessionController {
     }
   }
 
-  var remainingTimeText: String {
-    guard remainingSeconds > 0 else {
-      return "0m"
-    }
-
-    let hours = remainingSeconds / 3600
-    let minutes = (remainingSeconds % 3600) / 60
-
-    if hours > 0 {
-      return "\(hours)h \(minutes)m"
-    }
-
-    return "\(max(1, minutes))m"
-  }
-
+  /// Text for the menu bar status item.
   var statusItemText: String? {
     guard hasActiveSession else {
       return nil
     }
-
     let prefix = isPaused ? "⏸" : "◔"
-    return "\(prefix) \(remainingTimeText)"
+    return "\(prefix) \(timer.remainingTimeText)"
   }
 
+  // MARK: - Session Control
+
+  /// Starts a new focus session.
+  /// - Parameters:
+  ///   - goal: The user's goal for the session.
+  ///   - durationMinutes: How long the session should last.
   func startSession(goal: String, durationMinutes: Int) {
     let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
     let resolvedGoal = trimmedGoal.isEmpty ? "your work" : trimmedGoal
@@ -142,49 +157,46 @@ final class FocusSessionController {
       durationMinutes: resolvedDuration,
       startedAt: Date()
     )
-    remainingSeconds = resolvedDuration * 60
+    
     state = .active
     latestSummary = nil
     overrideEndsAt = nil
     nudgeEvents.removeAll()
-    activityLog.removeAll()
+    logger.reset()
     lastProductiveActivity = nil
     lastSeenActivity = nil
     pendingNudgeActivity = nil
+    
     clearNudge()
-    startCountdownTimer()
-    activityMonitor.start()
+    timer.start(minutes: resolvedDuration)
     notifySessionStateChange()
   }
 
+  /// Pauses the current session.
   func pauseSession() {
-    guard state == .active else {
-      return
-    }
-
+    guard state == .active else { return }
     state = .paused
+    timer.stop()
     driftWatchdog.cancel()
     clearNudge()
     notifySessionStateChange()
   }
 
+  /// Resumes the current paused session.
   func resumeSession() {
-    guard state == .paused else {
-      return
-    }
-
+    guard state == .paused, activeSession != nil else { return }
     state = .active
+    timer.start(minutes: timer.remainingSeconds / 60)
     notifySessionStateChange()
   }
 
+  /// Force-ends the current session.
   func endSession() {
-    guard let session = activeSession else {
-      return
-    }
-
+    guard let session = activeSession else { return }
     finishSession(session: session)
   }
 
+  /// Dismisses the session completion summary and returns to idle state.
   func dismissSummary() {
     latestSummary = nil
     if state == .completed {
@@ -193,97 +205,9 @@ final class FocusSessionController {
     notifySessionStateChange()
   }
 
-  func beginArguing() {
-    guard var nudge = currentNudge else {
-      return
-    }
-
-    nudge.stage = .arguing
-    currentNudge = nudge
-    notifyNudgeChange()
-  }
-
-  func updateJustificationDraft(_ text: String) {
-    guard var nudge = currentNudge else {
-      return
-    }
-
-    nudge.justificationDraft = text
-    currentNudge = nudge
-    notifyNudgeChange()
-  }
-
-  func backToWork() {
-    guard let nudge = currentNudge else {
-      return
-    }
-
-    nudgeEvents.append(
-      NudgeEvent(
-        occurredAt: Date(),
-        applicationName: nudge.activity.distractionLabel,
-        justification: nil,
-        outcome: .backToWork
-      )
-    )
-    refocusPreviousApp(for: nudge)
-    clearNudge()
-  }
-
-  func submitArgument() {
-    guard
-      var nudge = currentNudge,
-      let session = activeSession
-    else {
-      return
-    }
-
-    let justification = nudge.justificationDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    guard !justification.isEmpty else {
-      return
-    }
-
-    nudge.stage = .evaluating
-    currentNudge = nudge
-    notifyNudgeChange()
-
-    let nudgesToday = nudgeEvents.count
-    let allowedOverrides = nudgeEvents.filter {
-      if case .allowed = $0.outcome {
-        return true
-      }
-      return false
-    }.count
-
-    Task { [weak self] in
-      guard let self else {
-        return
-      }
-
-      do {
-        let decision = try await decisionClient.evaluateDecision(
-          goal: session.goal,
-          remainingMinutes: max(1, remainingSeconds / 60),
-          activity: nudge.activity,
-          justification: justification,
-          nudgesToday: nudgesToday,
-          allowedOverrides: allowedOverrides
-        )
-        self.applyDecision(decision, justification: justification)
-      } catch {
-        self.applyDecision(
-          FocusDecision(
-            verdict: .deny,
-            message: (error as? LocalizedError)?.errorDescription ?? "Couldn't verify that. Back to work.",
-            allowMinutes: nil
-          ),
-          justification: justification
-        )
-      }
-    }
-  }
-
+  /// Handles various textual session control commands.
+  /// - Parameter command: The command type.
+  /// - Returns: A localized response message for the assistant.
   func handleSessionCommand(_ command: SessionCommand) -> String {
     switch command {
     case .pause:
@@ -296,74 +220,34 @@ final class FocusSessionController {
       endSession()
       return "Ended the focus session."
     case .status:
-      guard let session = activeSession else {
+      guard let _ = activeSession else {
         return "There isn't an active focus session right now."
       }
-      return "You have \(remainingTimeText) left on '\(session.goal)'."
+      return "You have \(timer.remainingTimeText) left on '\(activeSession?.goal ?? "your goal")'."
     }
   }
 
-  private func applyDecision(_ decision: FocusDecision, justification: String) {
-    guard var nudge = currentNudge else {
-      return
-    }
+  // MARK: - Nudge & Distraction Management
 
-    nudge.stage = .resolved(decision)
-    currentNudge = nudge
-
-    switch decision.verdict {
-    case .allow:
-      let grantedMinutes = decision.allowMinutes ?? 5
-      overrideEndsAt = Date().addingTimeInterval(TimeInterval(grantedMinutes * 60))
-      nudgeEvents.append(
-        NudgeEvent(
-          occurredAt: Date(),
-          applicationName: nudge.activity.distractionLabel,
-          justification: justification,
-          outcome: .allowed(grantedMinutes)
-        )
-      )
-    case .deny:
-      nudgeEvents.append(
-        NudgeEvent(
-          occurredAt: Date(),
-          applicationName: nudge.activity.distractionLabel,
-          justification: justification,
-          outcome: .denied
-        )
-      )
-    }
-
-    notifyNudgeChange()
-
-    Task { @MainActor [weak self] in
-      guard let self else {
-        return
-      }
-
-      try? await Task.sleep(nanoseconds: 1_400_000_000)
-
-      guard let currentNudge = self.currentNudge, currentNudge.id == nudge.id else {
-        return
-      }
-
-      if decision.verdict == .deny {
-        self.refocusPreviousApp(for: currentNudge)
-      }
-
-      self.clearNudge()
-      self.notifySessionStateChange()
-    }
+  /// Clears the active distraction/nudge state, allowing new distractions to be detected.
+  func clearDistractionState() {
+    clearNudge()
   }
 
+  // MARK: - Activity Handling
+
+  /// Main entry point for activity change notifications from the ActivityMonitor.
   private func handleActivityChange(_ activity: ActivityContext) {
+    // 1. Filter out Poro itself to prevent "meta" activation loops.
     guard activity.bundleIdentifier != Bundle.main.bundleIdentifier else {
       return
     }
 
+    // 2. Persist activity in state and log.
     lastSeenActivity = activity
-    updateActivityLog(with: activity)
+    logger.recordActivity(activity)
 
+    // 3. Early return if no session logic is needed.
     guard let session = activeSession, state == .active else {
       return
     }
@@ -372,26 +256,24 @@ final class FocusSessionController {
       return
     }
 
-    guard currentNudge == nil else {
+    guard !isNudgeActive else {
       return
     }
 
+    // 4. Evaluate distraction policy.
     if let distractionHit = distractionPolicy.evaluate(activity: activity, goal: session.goal) {
-      if pendingNudgeActivity == activity {
-        return
-      }
+      if pendingNudgeActivity == activity { return }
 
       pendingNudgeActivity = activity
       let returnPid = lastProductiveActivity?.processIdentifier
 
+      // Use a watchdog to debounce accidental clicks (fires after 2s of continuous distraction).
       driftWatchdog.schedule { [weak self] in
         guard
           let self,
           self.state == .active,
-          self.currentNudge == nil,
-          self.lastSeenActivity == activity,
-          self.pendingNudgeActivity == activity,
-          self.overrideEndsAt.map({ $0 > Date() }) != true
+          !self.isNudgeActive,
+          !self.isOverrideActive
         else {
           return
         }
@@ -409,60 +291,34 @@ final class FocusSessionController {
     }
   }
 
-  private func presentNudge(
-    for activity: ActivityContext,
-    reason: String,
-    returnToProcessIdentifier: Int32?
-  ) {
-    guard let session = activeSession else {
-      return
-    }
-
-    currentNudge = NudgeContext(
-      activity: activity,
-      prompt: "You're on \(activity.distractionLabel). This isn't part of '\(session.goal)'. Keep going?",
-      returnToProcessIdentifier: returnToProcessIdentifier,
-      stage: .prompted,
-      justificationDraft: ""
-    )
+  /// Fires the distraction callback so the window layer can expand and inject the chat message.
+  private func presentNudge(for activity: ActivityContext, reason: String, returnToProcessIdentifier: Int32?) {
+    isNudgeActive = true
     pendingNudgeActivity = nil
-    notifyNudgeChange()
+    nudgeEvents.append(
+      NudgeEvent(
+        occurredAt: Date(),
+        applicationName: activity.distractionLabel,
+        justification: nil,
+        outcome: .backToWork
+      )
+    )
+    onDistractionDetected?(activity)
   }
 
-  private func startCountdownTimer() {
-    countdownTimer?.invalidate()
-    countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        self?.tick()
-      }
-    }
-  }
+  // MARK: - Private Helpers
+
 
   private func tick() {
     if let overrideEndsAt, overrideEndsAt <= Date() {
       self.overrideEndsAt = nil
     }
-
-    guard state == .active, activeSession != nil else {
-      notifySessionStateChange()
-      return
-    }
-
-    remainingSeconds = max(0, remainingSeconds - 1)
-
-    if remainingSeconds == 0, let session = activeSession {
-      finishSession(session: session)
-      return
-    }
-
     notifySessionStateChange()
   }
 
   private func finishSession(session: FocusSession) {
-    countdownTimer?.invalidate()
-    countdownTimer = nil
+    timer.stop()
     driftWatchdog.cancel()
-    activityMonitor.stop()
     clearNudge()
 
     let summary = SessionSummary(
@@ -470,12 +326,9 @@ final class FocusSessionController {
       startedAt: session.startedAt,
       endedAt: Date(),
       plannedDurationMinutes: session.durationMinutes,
-      completedMinutes: session.durationMinutes - (remainingSeconds / 60),
+      completedMinutes: session.durationMinutes - (timer.remainingSeconds / 60),
       nudgeCount: nudgeEvents.count,
-      allowedOverrideCount: nudgeEvents.filter {
-        if case .allowed = $0.outcome { return true }
-        return false
-      }.count,
+      allowedOverrideCount: nudgeEvents.filter { if case .allowed = $0.outcome { return true }; return false }.count,
       deniedOverrideCount: nudgeEvents.filter { $0.outcome == .denied }.count,
       topDistractions: topDistractions(from: nudgeEvents),
       memorableArguments: memorableArguments(from: nudgeEvents)
@@ -483,7 +336,6 @@ final class FocusSessionController {
 
     latestSummary = summary
     activeSession = nil
-    remainingSeconds = 0
     overrideEndsAt = nil
     state = .completed
     notifySessionStateChange()
@@ -498,76 +350,21 @@ final class FocusSessionController {
   }
 
   private func memorableArguments(from events: [NudgeEvent]) -> [String] {
-    events
+    Array(events
       .compactMap(\.justification)
       .sorted { $0.count > $1.count }
-      .prefix(3)
-      .map { $0 }
-  }
-
-  private func refocusPreviousApp(for nudge: NudgeContext) {
-    guard let pid = nudge.returnToProcessIdentifier else {
-      return
-    }
-
-    NSWorkspace.shared.runningApplications
-      .first(where: { $0.processIdentifier == pid })?
-      .activate(options: [])
+      .prefix(3))
   }
 
   private func clearNudge() {
-    currentNudge = nil
+    isNudgeActive = false
     pendingNudgeActivity = nil
     driftWatchdog.cancel()
-    notifyNudgeChange()
-  }
-
-  private func updateActivityLog(with activity: ActivityContext) {
-    if let lastEntry = activityLog.last, lastEntry.isSameActivity(as: activity) {
-      return
-    }
-
-    let now = Date()
-    if !activityLog.isEmpty {
-      activityLog[activityLog.count - 1].endedAt = now
-    }
-
-    let newEntry = ActivityLogEntry(
-      applicationName: activity.applicationName,
-      pageURL: activity.pageURL,
-      pageTitle: activity.pageTitle,
-      startedAt: now,
-      endedAt: nil
-    )
-    activityLog.append(newEntry)
-
-    if activityLog.count > 50 {
-      activityLog.removeFirst()
-    }
-  }
-
-  func activityLogSnapshot() -> String {
-    guard !activityLog.isEmpty else {
-      return "No activity recorded yet."
-    }
-
-    let formatter = DateComponentsFormatter()
-    formatter.allowedUnits = [.hour, .minute, .second]
-    formatter.unitsStyle = .abbreviated
-
-    return activityLog.map { entry in
-      let timeStr = formatter.string(from: entry.duration) ?? "\(Int(entry.duration))s"
-      let location = entry.pageTitle ?? entry.pageURL?.host?.lowercased() ?? entry.applicationName
-      return "- \(location) (\(timeStr))"
-    }.joined(separator: "\n")
-  }
-
-  private func notifyNudgeChange() {
-    onNudgeChange?(currentNudge)
   }
 
   private func notifySessionStateChange() {
     onSessionStateChange?()
+    onStatusItemUpdate?()
   }
 
   private func timeString(for date: Date) -> String {
@@ -576,6 +373,8 @@ final class FocusSessionController {
     formatter.dateStyle = .none
     return formatter.string(from: date)
   }
+
+  // MARK: - Tool Snapshot Methods
 
   func hasAssistantContextForTools() -> Bool {
     hasActiveSession || latestSummary != nil || !nudgeEvents.isEmpty
@@ -586,8 +385,8 @@ final class FocusSessionController {
       isActive: hasActiveSession,
       isPaused: isPaused,
       goal: activeSession?.goal,
-      remainingMinutes: hasActiveSession ? max(1, remainingSeconds / 60) : nil,
-      remainingTimeText: hasActiveSession ? remainingTimeText : nil,
+      remainingMinutes: hasActiveSession ? max(1, timer.remainingSeconds / 60) : nil,
+      remainingTimeText: hasActiveSession ? timer.remainingTimeText : nil,
       startedAt: activeSession?.startedAt,
       overrideEndsAt: isOverrideActive ? overrideEndsAt : nil
     )
@@ -604,6 +403,10 @@ final class FocusSessionController {
     )
   }
 
+  func activityLogSnapshot() -> String {
+    logger.snapshot()
+  }
+
   func recentDriftEventsSnapshot(limit: Int = 5) -> RecentDriftEventsToolResult {
     RecentDriftEventsToolResult(
       events: Array(nudgeEvents.suffix(limit)).map { event in
@@ -618,21 +421,14 @@ final class FocusSessionController {
   }
 
   func sessionStatsSnapshot() -> SessionStatsToolResult {
-    let allowedOverrideCount = nudgeEvents.filter {
-      if case .allowed = $0.outcome {
-        return true
-      }
-      return false
-    }.count
+    let allowedOverrideCount = nudgeEvents.filter { if case .allowed = $0.outcome { return true }; return false }.count
 
     return SessionStatsToolResult(
       isActive: hasActiveSession,
       goal: activeSession?.goal,
-      elapsedMinutes: activeSession.map { session in
-        max(0, session.durationMinutes - (remainingSeconds / 60))
-      },
-      remainingMinutes: hasActiveSession ? max(1, remainingSeconds / 60) : nil,
-      remainingTimeText: hasActiveSession ? remainingTimeText : nil,
+      elapsedMinutes: activeSession.map { max(0, $0.durationMinutes - (timer.remainingSeconds / 60)) },
+      remainingMinutes: hasActiveSession ? max(1, timer.remainingSeconds / 60) : nil,
+      remainingTimeText: hasActiveSession ? timer.remainingTimeText : nil,
       nudgeCount: nudgeEvents.count,
       allowedOverrideCount: allowedOverrideCount,
       deniedOverrideCount: nudgeEvents.filter { $0.outcome == .denied }.count,
@@ -642,12 +438,9 @@ final class FocusSessionController {
 
   private func describeOutcome(_ outcome: NudgeEvent.Outcome) -> String {
     switch outcome {
-    case .backToWork:
-      return "back_to_work"
-    case .allowed(let minutes):
-      return "allowed_\(minutes)_minutes"
-    case .denied:
-      return "denied"
+    case .backToWork: return "back_to_work"
+    case .allowed(let minutes): return "allowed_\(minutes)_minutes"
+    case .denied: return "denied"
     }
   }
 }

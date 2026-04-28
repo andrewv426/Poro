@@ -57,6 +57,7 @@ protocol AssistantToolbox: Sendable {
 
   func shouldOfferTools(for messages: [ChatMessage]) async -> Bool
   func executeTool(named name: String, argumentsJSON: String) async throws -> String
+  func fetchAllContext() async -> String
   func recordToolEvent(phase: String, toolName: String?, detail: String) async
 }
 

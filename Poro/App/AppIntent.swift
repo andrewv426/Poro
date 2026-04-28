@@ -6,6 +6,11 @@ enum PanelRoute: Equatable {
   case summary
 }
 
+enum AssistantPanelContext: Equatable {
+  case normal
+  case focus
+}
+
 enum SessionCommand: Equatable {
   case pause
   case resume

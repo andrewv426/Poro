@@ -2,9 +2,14 @@ import SwiftUI
 
 enum PoroTheme {
   static let width: CGFloat = 560
+  static let focusWidth: CGFloat = 420
+  static let focusExpandedSurfaceHeight: CGFloat = 280
+  static let focusCollapsedSurfaceHeight: CGFloat = 56
+  static let focusCollapsedTotalHeight: CGFloat = 76
+  static let tabHeight: CGFloat = 44
+  static let tabVisibleWidth: CGFloat = 36
   static let collapsedSurfaceHeight: CGFloat = 56
   static let collapsedTotalHeight: CGFloat = 88
-  static let activeSessionCollapsedTotalHeight: CGFloat = 92
   static let focusSetupHeight: CGFloat = 252
   static let summaryHeight: CGFloat = 330
   static let expandedSurfaceHeight: CGFloat = 480
@@ -32,5 +37,6 @@ enum PoroTheme {
 }
 
 extension Notification.Name {
-  static let assistantWindowDidShow = Notification.Name("assistantWindowDidShow")
+  static let normalAssistantWindowDidShow = Notification.Name("normalAssistantWindowDidShow")
+  static let focusAssistantWindowDidShow = Notification.Name("focusAssistantWindowDidShow")
 }

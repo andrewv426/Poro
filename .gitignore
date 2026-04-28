@@ -1,0 +1,13 @@
+# Xcode schemes (may contain env variables / secrets)
+Poro.xcodeproj/xcshareddata/xcschemes/
+
+# Xcode user data
+Poro.xcodeproj/xcuserdata/
+*.xcuserstate
+
+# Build artifacts
+build/
+DerivedData/
+
+# macOS
+.DS_Store

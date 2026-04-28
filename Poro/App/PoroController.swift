@@ -5,12 +5,21 @@ import Observation
 @MainActor
 final class PoroController {
   let chatController: ChatController
+  let focusChatController: ChatController
   let focusSessionController: FocusSessionController
 
   var panelRoute: PanelRoute = .chat
+  var focusPanelRoute: PanelRoute = .chat
   var composerDraft = ""
+  var focusComposerDraft = ""
   var composerHint: ComposerHint?
+  var focusComposerHint: ComposerHint?
   var focusSetupDraft: FocusStartDraft = .default
+  var isFocusPanelTucked: Bool = false
+
+  func chatController(for context: AssistantPanelContext) -> ChatController {
+    context == .focus ? focusChatController : chatController
+  }
 
   var onDismissRequested: (() -> Void)?
   var onPresentRequested: (() -> Void)?
@@ -19,15 +28,17 @@ final class PoroController {
 
   init(
     chatController: ChatController,
+    focusChatController: ChatController,
     focusSessionController: FocusSessionController,
     intentRouter: AppIntentRouter
   ) {
     self.chatController = chatController
+    self.focusChatController = focusChatController
     self.focusSessionController = focusSessionController
     self.intentRouter = intentRouter
 
     focusSessionController.onSummaryAvailable = { [weak self] _ in
-      self?.panelRoute = .summary
+      self?.focusPanelRoute = .summary
       self?.onPresentRequested?()
     }
   }
@@ -35,6 +46,7 @@ final class PoroController {
   convenience init() {
     let focusSessionController = FocusSessionController()
     let chatController: ChatController
+    let focusChatController: ChatController
 
     do {
       let configuration = try LLMConfiguration.loadFromEnvironment()
@@ -43,8 +55,16 @@ final class PoroController {
         session: ChatSession(),
         llmClient: CerebrasLLMClient(configuration: configuration, toolbox: toolbox)
       )
+      focusChatController = ChatController(
+        session: ChatSession(),
+        llmClient: CerebrasLLMClient(configuration: configuration)
+      )
     } catch {
       chatController = ChatController(
+        session: ChatSession(),
+        llmClient: UnavailableLLMClient(error: error)
+      )
+      focusChatController = ChatController(
         session: ChatSession(),
         llmClient: UnavailableLLMClient(error: error)
       )
@@ -52,13 +72,26 @@ final class PoroController {
 
     self.init(
       chatController: chatController,
+      focusChatController: focusChatController,
       focusSessionController: focusSessionController,
       intentRouter: AppIntentRouter()
     )
   }
 
-  var isChatExpanded: Bool {
-    panelRoute == .chat && chatController.hasConversation
+  func route(for context: AssistantPanelContext) -> PanelRoute {
+    context == .focus ? focusPanelRoute : panelRoute
+  }
+
+  func composerDraft(for context: AssistantPanelContext) -> String {
+    context == .focus ? focusComposerDraft : composerDraft
+  }
+
+  func composerHint(for context: AssistantPanelContext) -> ComposerHint? {
+    context == .focus ? focusComposerHint : composerHint
+  }
+
+  func isChatExpanded(in context: AssistantPanelContext) -> Bool {
+    route(for: context) == .chat && chatController(for: context).hasConversation
   }
 
   var isFocusSessionActive: Bool {
@@ -69,23 +102,38 @@ final class PoroController {
     focusSessionController.statusLine
   }
 
-  func prepareForPresentation() {
-    if panelRoute != .summary && panelRoute != .focusSetup {
-      panelRoute = .chat
+  func prepareForPresentation(in context: AssistantPanelContext) {
+    switch context {
+    case .normal:
+      if panelRoute != .summary && panelRoute != .focusSetup {
+        panelRoute = .chat
+      }
+    case .focus:
+      if focusPanelRoute != .summary {
+        focusPanelRoute = .chat
+      }
     }
 
-    refreshComposerHint()
+    refreshComposerHint(in: context)
   }
 
-  func updateComposerDraft(_ text: String) {
-    if composerDraft != text {
-      composerDraft = text
+  func updateComposerDraft(_ text: String, in context: AssistantPanelContext) {
+    switch context {
+    case .normal:
+      if composerDraft != text {
+        composerDraft = text
+      }
+    case .focus:
+      if focusComposerDraft != text {
+        focusComposerDraft = text
+      }
     }
-    refreshComposerHint()
+
+    refreshComposerHint(in: context)
   }
 
-  func submitComposer() {
-    let trimmed = composerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+  func submitComposer(in context: AssistantPanelContext) {
+    let trimmed = composerDraft(for: context).trimmingCharacters(in: .whitespacesAndNewlines)
 
     guard !trimmed.isEmpty else {
       return
@@ -98,28 +146,28 @@ final class PoroController {
 
     switch intent {
     case .chat(let message):
-      panelRoute = .chat
-      composerDraft = ""
-      composerHint = nil
-      chatController.send(message)
+      setRoute(.chat, in: context)
+      setComposerDraft("", in: context)
+      setComposerHint(nil, in: context)
+      chatController(for: context).send(message)
     case .startFocus(let draft):
-      composerDraft = ""
-      composerHint = nil
+      setComposerDraft("", in: context)
+      setComposerHint(nil, in: context)
       focusSetupDraft = FocusStartDraft(
         goal: draft.goal,
         durationMinutes: draft.durationMinutes
       )
       panelRoute = .focusSetup
     case .sessionCommand(let command):
-      composerDraft = ""
-      composerHint = nil
-      handleSessionCommand(command, originalText: trimmed)
+      setComposerDraft("", in: context)
+      setComposerHint(nil, in: context)
+      handleSessionCommand(command, originalText: trimmed, in: context)
     }
   }
 
   func cancelFocusSetup() {
     panelRoute = .chat
-    refreshComposerHint()
+    refreshComposerHint(in: .normal)
   }
 
   func confirmFocusSetup() {
@@ -128,38 +176,84 @@ final class PoroController {
 
     focusSessionController.startSession(goal: goal, durationMinutes: duration)
     panelRoute = .chat
+    focusPanelRoute = .chat
     composerDraft = ""
+    focusComposerDraft = ""
     composerHint = nil
-    chatController.startNewConversation()
+    focusComposerHint = nil
+    focusChatController.startNewConversation()
     onDismissRequested?()
   }
 
   func dismissSummary() {
     focusSessionController.dismissSummary()
-    panelRoute = .chat
+    focusPanelRoute = .chat
   }
 
-  private func handleSessionCommand(_ command: SessionCommand, originalText: String) {
+  /// Called when a distraction is detected during a focus session.
+  /// Injects a user bubble describing the drift and streams a Poro response.
+  func injectDistractionMessage(activity: ActivityContext) {
+    guard let session = focusSessionController.activeSession else { return }
+    focusPanelRoute = .chat
+    let userText = "I drifted to \(activity.distractionLabel)"
+    let prompt = "You're working on '\(session.goal)' and just switched to \(activity.distractionLabel). Gently redirect me back without being preachy — one or two sentences max."
+    focusChatController.injectDistractionExchange(userText: userText, assistantPrompt: prompt)
+  }
+
+  private func handleSessionCommand(
+    _ command: SessionCommand,
+    originalText: String,
+    in context: AssistantPanelContext
+  ) {
     let response = focusSessionController.handleSessionCommand(command)
 
     switch command {
     case .end:
-      panelRoute = .summary
+      focusPanelRoute = .summary
     case .pause, .resume, .status:
-      panelRoute = .chat
-      chatController.appendLocalExchange(userText: originalText, assistantText: response)
+      setRoute(.chat, in: context)
+      chatController(for: context).appendLocalExchange(userText: originalText, assistantText: response)
     }
   }
 
-  private func refreshComposerHint() {
-    guard panelRoute == .chat else {
-      composerHint = nil
+  private func setRoute(_ route: PanelRoute, in context: AssistantPanelContext) {
+    switch context {
+    case .normal:
+      panelRoute = route
+    case .focus:
+      focusPanelRoute = route
+    }
+  }
+
+  private func setComposerDraft(_ draft: String, in context: AssistantPanelContext) {
+    switch context {
+    case .normal:
+      composerDraft = draft
+    case .focus:
+      focusComposerDraft = draft
+    }
+  }
+
+  private func setComposerHint(_ hint: ComposerHint?, in context: AssistantPanelContext) {
+    switch context {
+    case .normal:
+      composerHint = hint
+    case .focus:
+      focusComposerHint = hint
+    }
+  }
+
+  private func refreshComposerHint(in context: AssistantPanelContext) {
+    guard route(for: context) == .chat else {
+      setComposerHint(nil, in: context)
       return
     }
 
-    composerHint = intentRouter.preview(
-      for: composerDraft,
+    let draft = composerDraft(for: context)
+    let preview = intentRouter.preview(
+      for: draft,
       hasActiveSession: focusSessionController.hasActiveSession
-    ).hint
+    )
+    setComposerHint(preview.hint, in: context)
   }
 }

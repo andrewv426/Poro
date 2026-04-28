@@ -5,7 +5,7 @@ final class DriftWatchdog {
   private let gracePeriodNanoseconds: UInt64
   private var task: Task<Void, Never>?
 
-  init(gracePeriodSeconds: TimeInterval = 10) {
+  init(gracePeriodSeconds: TimeInterval = 2) {
     gracePeriodNanoseconds = UInt64(gracePeriodSeconds * 1_000_000_000)
   }
 

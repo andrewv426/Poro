@@ -17,7 +17,7 @@ final class StatusItemController {
     }
 
     statusItem.isVisible = false
-    focusSessionController.onSessionStateChange = { [weak self] in
+    focusSessionController.onStatusItemUpdate = { [weak self] in
       self?.update()
     }
     update()

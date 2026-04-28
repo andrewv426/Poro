@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
   @Bindable var poroController: PoroController
+  let context: AssistantPanelContext
   @FocusState private var isInputFocused: Bool
 
   private let onDismissRequest: () -> Void
@@ -9,23 +10,25 @@ struct ContentView: View {
 
   init(
     poroController: PoroController,
+    context: AssistantPanelContext = .normal,
     onDismissRequest: @escaping () -> Void = {},
     onPanelHeightChange: @escaping (CGFloat) -> Void = { _ in }
   ) {
     self.poroController = poroController
+    self.context = context
     self.onDismissRequest = onDismissRequest
     self.onPanelHeightChange = onPanelHeightChange
   }
 
   private var totalHeight: CGFloat {
-    switch poroController.panelRoute {
+    if context == .focus && poroController.isFocusPanelTucked { return PoroTheme.tabHeight }
+    let focus = context == .focus
+    switch poroController.route(for: context) {
     case .chat:
-      if poroController.isChatExpanded {
-        return PoroTheme.expandedSurfaceHeight
+      if poroController.isChatExpanded(in: context) {
+        return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
       }
-
-      return poroController.isFocusSessionActive
-        ? PoroTheme.activeSessionCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
+      return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
     case .focusSetup:
       return PoroTheme.focusSetupHeight
     case .summary:
@@ -34,9 +37,13 @@ struct ContentView: View {
   }
 
   private var surfaceHeight: CGFloat {
-    switch poroController.panelRoute {
+    let focus = context == .focus
+    switch poroController.route(for: context) {
     case .chat:
-      return poroController.isChatExpanded ? PoroTheme.expandedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
+      if poroController.isChatExpanded(in: context) {
+        return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
+      }
+      return focus ? PoroTheme.focusCollapsedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
     case .focusSetup:
       return PoroTheme.focusSetupHeight
     case .summary:
@@ -45,33 +52,42 @@ struct ContentView: View {
   }
 
   var body: some View {
-    VStack(spacing: showsFooterStrip ? 12 : 0) {
-      surface
-        .frame(width: PoroTheme.width, height: surfaceHeight, alignment: .top)
+    Group {
+      if context == .focus && poroController.isFocusPanelTucked {
+        FocusTabView(isSessionActive: poroController.isFocusSessionActive)
+          .frame(width: PoroTheme.focusWidth, height: PoroTheme.tabHeight, alignment: .leading)
+      } else {
+        let panelWidth = context == .focus ? PoroTheme.focusWidth : PoroTheme.width
+        VStack(spacing: showsFooterStrip ? 12 : 0) {
+          surface
+            .frame(width: panelWidth, height: surfaceHeight, alignment: .top)
 
-      if showsFooterStrip {
-        footerStrip
-          .transition(.opacity)
+          if showsFooterStrip {
+            footerStrip
+              .transition(.opacity)
+          }
+        }
+        .frame(width: panelWidth, height: totalHeight, alignment: .top)
+        .onReceive(NotificationCenter.default.publisher(for: didShowNotificationName)) { _ in
+          focusInputSoon()
+        }
+        .onExitCommand {
+          handleEscape()
+        }
       }
     }
-    .frame(width: PoroTheme.width, height: totalHeight, alignment: .top)
     .background(Color.clear)
     .preferredColorScheme(.dark)
-    .animation(PoroTheme.shellAnimation, value: poroController.panelRoute)
-    .animation(PoroTheme.shellAnimation, value: poroController.isChatExpanded)
-    .animation(PoroTheme.fadeAnimation, value: poroController.composerHint)
+    .animation(PoroTheme.shellAnimation, value: poroController.route(for: context))
+    .animation(PoroTheme.shellAnimation, value: poroController.isChatExpanded(in: context))
+    .animation(PoroTheme.shellAnimation, value: poroController.isFocusPanelTucked)
+    .animation(PoroTheme.fadeAnimation, value: poroController.composerHint(for: context))
     .onAppear {
       onPanelHeightChange(totalHeight)
       focusInputSoon()
     }
     .onChange(of: totalHeight) { _, height in
       onPanelHeightChange(height)
-    }
-    .onReceive(NotificationCenter.default.publisher(for: .assistantWindowDidShow)) { _ in
-      focusInputSoon()
-    }
-    .onExitCommand {
-      handleEscape()
     }
   }
 
@@ -80,7 +96,7 @@ struct ContentView: View {
       HUDMaterialView()
       PoroTheme.windowTint
 
-      switch poroController.panelRoute {
+      switch poroController.route(for: context) {
       case .chat:
         chatSurface
       case .focusSetup:
@@ -106,27 +122,26 @@ struct ContentView: View {
 
   private var chatSurface: some View {
     VStack(spacing: 0) {
-      if poroController.isChatExpanded {
+      if poroController.isChatExpanded(in: context) {
         TopToolbarView(
-          onNewConversation: poroController.chatController.startNewConversation,
+          onNewConversation: poroController.chatController(for: context).startNewConversation,
           onHistory: {},
           onSettings: {},
           statusLine: poroController.sessionStatusLine,
           onEndSession: poroController.isFocusSessionActive ? {
             _ = poroController.focusSessionController.handleSessionCommand(.end)
-            poroController.panelRoute = .summary
           } : nil
         )
         .padding(.top, 8)
         .transition(.opacity.combined(with: .move(edge: .top)))
 
         MessagesListView(
-          messages: poroController.chatController.messages,
-          isStreaming: poroController.chatController.isSending
+          messages: poroController.chatController(for: context).messages,
+          isStreaming: poroController.chatController(for: context).isSending
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-        if let errorMessage = poroController.chatController.errorMessage {
+        if let errorMessage = poroController.chatController(for: context).errorMessage {
           Text(errorMessage)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(PoroTheme.stopColor)
@@ -143,27 +158,24 @@ struct ContentView: View {
       }
 
       InputRowView(
-        draft: $poroController.composerDraft,
+        draft: composerDraftBinding,
         isFocused: $isInputFocused,
-        isStreaming: poroController.chatController.isSending,
-        onSubmit: poroController.submitComposer,
-        onStop: poroController.chatController.stopStreaming
+        isStreaming: poroController.chatController(for: context).isSending,
+        onSubmit: { poroController.submitComposer(in: context) },
+        onStop: poroController.chatController(for: context).stopStreaming
       )
-      .onChange(of: poroController.composerDraft) { _, draft in
-        poroController.updateComposerDraft(draft)
-      }
     }
   }
 
   private var showsFooterStrip: Bool {
-    poroController.panelRoute == .chat && !poroController.isChatExpanded
+    poroController.route(for: context) == .chat && !poroController.isChatExpanded(in: context)
   }
 
   @ViewBuilder
   private var footerStrip: some View {
-    if let composerHint = poroController.composerHint {
+    if let composerHint = poroController.composerHint(for: context) {
       ComposerHintStripView(title: composerHint.title)
-    } else if poroController.isFocusSessionActive, let statusLine = poroController.sessionStatusLine {
+    } else if context == .focus, poroController.isFocusSessionActive, let statusLine = poroController.sessionStatusLine {
       SessionStatusStripView(statusLine: statusLine)
     } else {
       HintView()
@@ -171,10 +183,19 @@ struct ContentView: View {
   }
 
   private func handleEscape() {
-    switch poroController.panelRoute {
+    // During an active focus session, Esc always tucks — never fully hides.
+    if context == .focus, poroController.isFocusSessionActive {
+      if poroController.chatController(for: context).isSending {
+        poroController.chatController(for: context).stopStreaming()
+      }
+      onDismissRequest()
+      return
+    }
+
+    switch poroController.route(for: context) {
     case .chat:
-      if poroController.chatController.isSending {
-        poroController.chatController.stopStreaming()
+      if poroController.chatController(for: context).isSending {
+        poroController.chatController(for: context).stopStreaming()
       } else {
         onDismissRequest()
       }
@@ -186,13 +207,28 @@ struct ContentView: View {
   }
 
   private func focusInputSoon() {
-    guard poroController.panelRoute == .chat else {
+    guard poroController.route(for: context) == .chat else {
       return
     }
 
     DispatchQueue.main.async {
       isInputFocused = true
     }
+  }
+
+  private var composerDraftBinding: Binding<String> {
+    Binding(
+      get: {
+        poroController.composerDraft(for: context)
+      },
+      set: { draft in
+        poroController.updateComposerDraft(draft, in: context)
+      }
+    )
+  }
+
+  private var didShowNotificationName: Notification.Name {
+    context == .focus ? .focusAssistantWindowDidShow : .normalAssistantWindowDidShow
   }
 }
 
@@ -219,6 +255,47 @@ private struct SessionStatusStripView: View {
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(Color.white.opacity(0.44))
         .lineLimit(1)
+    }
+  }
+}
+
+// MARK: - Focus Tab
+
+private struct FocusTabView: View {
+  let isSessionActive: Bool
+  @State private var pulse = false
+
+  var body: some View {
+    HStack(spacing: 0) {
+      Spacer()
+
+      ZStack {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .fill(Color(red: 22/255, green: 22/255, blue: 28/255).opacity(0.88))
+          .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .stroke(PoroTheme.innerBorder, lineWidth: 1)
+          )
+          .shadow(color: .black.opacity(0.45), radius: 12, y: 4)
+
+        if isSessionActive {
+          Circle()
+            .stroke(PoroTheme.accent.opacity(pulse ? 0.55 : 0.15), lineWidth: pulse ? 1.5 : 3)
+            .frame(width: 28, height: 28)
+            .scaleEffect(pulse ? 1.35 : 1.0)
+            .animation(
+              Animation.easeInOut(duration: 1.6).repeatForever(autoreverses: true),
+              value: pulse
+            )
+        }
+
+        Image("Poro")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 22, height: 22)
+      }
+      .frame(width: PoroTheme.tabVisibleWidth, height: PoroTheme.tabHeight)
+      .onAppear { pulse = true }
     }
   }
 }
