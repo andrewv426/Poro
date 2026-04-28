@@ -34,6 +34,12 @@ struct BrowserTabContextProvider {
     let errorDescription: String?
   }
 
+  enum CloseTabResult: Equatable, Sendable {
+    case closed
+    case urlMismatch(currentURL: String?)
+    case failed(String)
+  }
+
   /// Supported browser applications.
   enum BrowserApp: Equatable {
     case chrome
@@ -148,6 +154,32 @@ struct BrowserTabContextProvider {
   /// - Returns: The URL if successfully retrieved, otherwise nil.
   func activeTabURL(for browser: BrowserApp, processIdentifier: Int32? = nil) async -> URL? {
     await activeTabSnapshot(for: browser, processIdentifier: processIdentifier).url
+  }
+
+  /// Closes the active browser tab only when its current URL still exactly matches the flagged URL.
+  func closeActiveTabIfMatching(
+    for browser: BrowserApp,
+    targetURL: URL,
+    processIdentifier: Int32? = nil
+  ) async -> CloseTabResult {
+    let permissionStatus = await Self.automationPermissionStatus(for: browser, processIdentifier: processIdentifier)
+
+    if permissionStatus == OSStatus(errAEEventNotPermitted) {
+      return .failed(
+        "Automation permission denied for \(browser.applescriptApplicationName). Enable Poro -> \(browser.applescriptApplicationName) in System Settings > Privacy & Security > Automation."
+      )
+    }
+
+    return await withCheckedContinuation { continuation in
+      Thread.detachNewThread {
+        continuation.resume(
+          returning: Self.closeActiveTabIfMatching(
+            browser: browser,
+            targetURLString: targetURL.absoluteString
+          )
+        )
+      }
+    }
   }
 
   // MARK: - Private synchronous helpers (must only be called off the main thread)
@@ -267,5 +299,73 @@ struct BrowserTabContextProvider {
     let title = result?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
     return (title?.isEmpty == false) ? title : nil
   }
+
+  private static func closeActiveTabIfMatching(
+    browser: BrowserApp,
+    targetURLString: String
+  ) -> CloseTabResult {
+    let scriptSource = browser.closeActiveTabScript(targetURLString: targetURLString)
+    var errorInfo: NSDictionary?
+    let script = NSAppleScript(source: scriptSource)
+    let result = script?.executeAndReturnError(&errorInfo)
+
+    if let errorInfo {
+      let message = errorInfo[NSAppleScript.errorMessage] as? String
+      logger.error("AppleScript error closing tab (\(browser.applescriptApplicationName)): \(String(describing: errorInfo))")
+      return .failed(message ?? "Failed to close the browser tab.")
+    }
+
+    let rawResult = result?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+    if rawResult == "closed" {
+      return .closed
+    }
+
+    if rawResult.hasPrefix("mismatch:") {
+      let currentURL = String(rawResult.dropFirst("mismatch:".count))
+      return .urlMismatch(currentURL: currentURL.isEmpty ? nil : currentURL)
+    }
+
+    return .failed(rawResult.isEmpty ? "Failed to close the browser tab." : rawResult)
+  }
 }
 
+private extension BrowserTabContextProvider.BrowserApp {
+  func closeActiveTabScript(targetURLString: String) -> String {
+    let target = targetURLString.escapedForAppleScriptString
+
+    switch self {
+    case .safari:
+      return """
+        tell application id "\(bundleIdentifier)"
+          if (count of windows) is 0 then return "no_window"
+          set currentURL to URL of current tab of front window
+          if currentURL is "\(target)" then
+            close current tab of front window
+            return "closed"
+          end if
+          return "mismatch:" & currentURL
+        end tell
+        """
+    case .chrome, .arc, .brave:
+      return """
+        tell application id "\(bundleIdentifier)"
+          if (count of windows) is 0 then return "no_window"
+          set currentURL to URL of active tab of front window
+          if currentURL is "\(target)" then
+            close active tab of front window
+            return "closed"
+          end if
+          return "mismatch:" & currentURL
+        end tell
+        """
+    }
+  }
+}
+
+private extension String {
+  var escapedForAppleScriptString: String {
+    replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+  }
+}

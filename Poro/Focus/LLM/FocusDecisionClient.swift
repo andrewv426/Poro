@@ -11,6 +11,17 @@ struct FocusDecision: Codable, Equatable, Sendable {
   let allowMinutes: Int?
 }
 
+struct DistractionClassification: Codable, Equatable, Sendable {
+  enum Verdict: String, Codable, Sendable {
+    case allow
+    case distract
+  }
+
+  let verdict: Verdict
+  let score: Double
+  let reason: String
+}
+
 protocol FocusDecisionEvaluating: Sendable {
   nonisolated func evaluateDecision(
     goal: String,
@@ -20,4 +31,12 @@ protocol FocusDecisionEvaluating: Sendable {
     nudgesToday: Int,
     allowedOverrides: Int
   ) async throws -> FocusDecision
+}
+
+protocol DistractionClassifying: Sendable {
+  nonisolated func classifyDistraction(
+    goal: String,
+    remainingMinutes: Int,
+    activity: ActivityContext
+  ) async throws -> DistractionClassification
 }

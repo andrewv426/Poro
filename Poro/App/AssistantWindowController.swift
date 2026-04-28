@@ -22,6 +22,7 @@ final class AssistantWindowController {
     static let panelPlacementMode = "poro.panelPlacement.mode"
     static let panelPlacementX = "poro.panelPlacement.x"
     static let panelPlacementY = "poro.panelPlacement.y"
+    static let focusTabTopRatio = "poro.focusPanel.tabTopRatio"
   }
 
   private enum Tab {
@@ -34,6 +35,8 @@ final class AssistantWindowController {
   private var normalTotalHeight: CGFloat
   private var focusTotalHeight: CGFloat
   private var panelPlacement: PanelPlacement
+  private var focusTabTopRatio: CGFloat
+  private var focusTabDragMouseOffsetY: CGFloat?
   private var localKeyMonitor: Any?
   private var focusMode: FocusPanelMode = .hidden {
     didSet { poroController.isFocusPanelTucked = (focusMode == .tucked) }
@@ -44,6 +47,7 @@ final class AssistantWindowController {
     normalTotalHeight = PoroTheme.collapsedTotalHeight
     focusTotalHeight = PoroTheme.tabHeight
     panelPlacement = Self.loadPanelPlacement()
+    focusTabTopRatio = Self.loadFocusTabTopRatio()
 
     normalPanel = Self.makePanel(
       width: PoroTheme.width,
@@ -76,6 +80,12 @@ final class AssistantWindowController {
         },
         onPanelHeightChange: { [weak self] totalHeight in
           self?.setFocusPanelHeight(totalHeight, animated: true)
+        },
+        onFocusTabDragChanged: { [weak self] in
+          self?.dragFocusTab()
+        },
+        onFocusTabDragEnded: { [weak self] in
+          self?.finishDraggingFocusTab()
         }
       )
     )
@@ -91,6 +101,9 @@ final class AssistantWindowController {
     }
     poroController.focusSessionController.onDistractionDetected = { [weak self] activity in
       self?.handleDistractionDetected(activity: activity)
+    }
+    poroController.focusSessionController.onDistractionResolved = { [weak self] in
+      self?.handleDistractionResolved()
     }
 
     applyNormalFrame(animated: false)
@@ -171,6 +184,11 @@ final class AssistantWindowController {
       try? await Task.sleep(for: .seconds(30))
       self?.poroController.focusSessionController.clearDistractionState()
     }
+  }
+
+  private func handleDistractionResolved() {
+    guard poroController.focusSessionController.hasActiveSession else { return }
+    tuckFocus(animated: true)
   }
 
   // MARK: - Normal panel
@@ -290,7 +308,7 @@ final class AssistantWindowController {
   private func focusTuckedFrame() -> NSRect {
     guard let screen = focusPanel.screen ?? NSScreen.main else { return .zero }
     let sf = screen.frame
-    let topY = sf.maxY - (sf.height * Tab.topRatio)
+    let topY = focusTopY(in: sf, height: PoroTheme.focusExpandedSurfaceHeight)
     let y = topY - PoroTheme.tabHeight
     let x = sf.minX - (PoroTheme.focusWidth - PoroTheme.tabVisibleWidth)
 
@@ -300,10 +318,21 @@ final class AssistantWindowController {
   private func focusExpandedFrame() -> NSRect {
     guard let screen = focusPanel.screen ?? NSScreen.main else { return .zero }
     let sf = screen.frame
-    let topY = sf.maxY - (sf.height * Tab.topRatio)
+    let topY = focusTopY(in: sf, height: focusTotalHeight)
     let y = topY - focusTotalHeight
 
     return NSRect(x: sf.minX, y: y, width: PoroTheme.focusWidth, height: focusTotalHeight)
+  }
+
+  private func focusTopY(in screenFrame: NSRect, height: CGFloat) -> CGFloat {
+    let unclampedTopY = screenFrame.maxY - (screenFrame.height * focusTabTopRatio)
+    return clampedFocusTopY(unclampedTopY, in: screenFrame, height: height)
+  }
+
+  private func clampedFocusTopY(_ topY: CGFloat, in screenFrame: NSRect, height: CGFloat) -> CGFloat {
+    let minTopY = screenFrame.minY + height
+    let maxTopY = screenFrame.maxY
+    return min(max(topY, minTopY), maxTopY)
   }
 
   private func normalFrame() -> NSRect {
@@ -420,10 +449,7 @@ final class AssistantWindowController {
   }
 
   private func handleKeyboardEvent(_ event: NSEvent) -> NSEvent? {
-    guard normalPanel.isVisible, event.window === normalPanel else { return event }
-
-    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    guard flags.contains(.command), flags.contains(.option) else { return event }
+    guard shouldHandleNormalPanelMove(event) else { return event }
 
     switch event.keyCode {
     case 123: nudgeNormalPanel(dx: -KeyboardMove.step, dy: 0); return nil
@@ -432,6 +458,23 @@ final class AssistantWindowController {
     case 126: nudgeNormalPanel(dx: 0, dy:  KeyboardMove.step); return nil
     default: return event
     }
+  }
+
+  private func shouldHandleNormalPanelMove(_ event: NSEvent) -> Bool {
+    guard
+      normalPanel.isVisible,
+      normalPanel.isKeyWindow,
+      event.window === normalPanel
+    else {
+      return false
+    }
+
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard flags.contains(.command), flags.contains(.option) else {
+      return false
+    }
+
+    return [123, 124, 125, 126].contains(event.keyCode)
   }
 
   private func nudgeNormalPanel(dx: CGFloat, dy: CGFloat) {
@@ -443,6 +486,32 @@ final class AssistantWindowController {
     panelPlacement = .manual(topLeft: movedTopLeft)
     persistPanelPlacement()
     normalPanel.setFrame(normalFrame(), display: true, animate: false)
+  }
+
+  private func dragFocusTab() {
+    guard focusMode == .tucked, let screen = focusPanel.screen ?? NSScreen.main else { return }
+
+    let screenFrame = screen.frame
+    let mouseY = NSEvent.mouseLocation.y
+
+    if focusTabDragMouseOffsetY == nil {
+      focusTabDragMouseOffsetY = focusPanel.frame.maxY - mouseY
+    }
+
+    let proposedTopY = mouseY + (focusTabDragMouseOffsetY ?? 0)
+    let clampedTopY = clampedFocusTopY(
+      proposedTopY,
+      in: screenFrame,
+      height: PoroTheme.focusExpandedSurfaceHeight
+    )
+    focusTabTopRatio = (screenFrame.maxY - clampedTopY) / screenFrame.height
+    focusPanel.setFrame(focusTuckedFrame(), display: true, animate: false)
+  }
+
+  private func finishDraggingFocusTab() {
+    dragFocusTab()
+    focusTabDragMouseOffsetY = nil
+    persistFocusTabPlacement()
   }
 
   // MARK: - Persistence
@@ -461,6 +530,10 @@ final class AssistantWindowController {
     }
   }
 
+  private func persistFocusTabPlacement() {
+    UserDefaults.standard.set(focusTabTopRatio, forKey: DefaultsKey.focusTabTopRatio)
+  }
+
   private static func loadPanelPlacement() -> PanelPlacement {
     let defaults = UserDefaults.standard
     guard defaults.string(forKey: DefaultsKey.panelPlacementMode) == "manual" else {
@@ -470,6 +543,16 @@ final class AssistantWindowController {
     let y = defaults.double(forKey: DefaultsKey.panelPlacementY)
     guard x != 0 || y != 0 else { return .automatic }
     return .manual(topLeft: CGPoint(x: x, y: y))
+  }
+
+  private static func loadFocusTabTopRatio() -> CGFloat {
+    let storedRatio = UserDefaults.standard.double(forKey: DefaultsKey.focusTabTopRatio)
+
+    guard storedRatio > 0, storedRatio < 1 else {
+      return Tab.topRatio
+    }
+
+    return CGFloat(storedRatio)
   }
 
   private static func makePanel(width: CGFloat, height: CGFloat) -> FloatingAssistantPanel {

@@ -36,7 +36,7 @@ struct DistractionPolicy {
     "tiktok.com",
   ]
 
-  func evaluate(activity: ActivityContext, goal: String) -> DistractionHit? {
+  func staticHit(activity: ActivityContext) -> DistractionHit? {
     if let bundleIdentifier = activity.bundleIdentifier,
       alwaysDistractingBundleIdentifiers.contains(bundleIdentifier)
     {
@@ -50,41 +50,37 @@ struct DistractionPolicy {
       browserBundleIdentifiers.contains(bundleIdentifier)
     {
       if let host = activity.pageHost,
-        distractingHosts.contains(host) || distractingHosts.contains(host.replacingOccurrences(of: "www.", with: ""))
+        isDistractingHost(host)
       {
         return DistractionHit(
           applicationName: host,
           reason: "\(host) is a distraction for this session."
         )
       }
-
-      guard !goalSuggestsBrowserWork(goal) else {
-        return nil
-      }
-
-      return DistractionHit(
-        applicationName: activity.applicationName,
-        reason: "\(activity.applicationName) is outside the current focus goal."
-      )
     }
 
     return nil
   }
 
-  private func goalSuggestsBrowserWork(_ goal: String) -> Bool {
-    let lowercased = goal.lowercased()
-    let browserFriendlyKeywords = [
-      "research",
-      "reference",
-      "web",
-      "browser",
-      "read",
-      "docs",
-      "documentation",
-      "source",
-      "look up",
-    ]
+  func needsLLMClassification(activity: ActivityContext) -> Bool {
+    guard
+      let bundleIdentifier = activity.bundleIdentifier,
+      browserBundleIdentifiers.contains(bundleIdentifier),
+      activity.pageURL != nil
+    else {
+      return false
+    }
 
-    return browserFriendlyKeywords.contains(where: { lowercased.contains($0) })
+    if let host = activity.pageHost, isDistractingHost(host) {
+      return false
+    }
+
+    return true
+  }
+
+  private func isDistractingHost(_ host: String) -> Bool {
+    let normalizedHost = host.replacingOccurrences(of: "www.", with: "")
+    return distractingHosts.contains(normalizedHost)
+      || distractingHosts.contains(where: { normalizedHost.hasSuffix(".\($0)") })
   }
 }

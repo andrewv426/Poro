@@ -151,6 +151,33 @@ final class ChatController {
     }
   }
 
+  /// Streams an assistant-only response. The LLM receives `assistantPrompt`,
+  /// but no synthetic user bubble is added to the visible chat history.
+  func injectAssistantPrompt(_ assistantPrompt: String) {
+    guard canSendMessage else { return }
+    requestState = .idle
+    let historyBeforeInjection = session.messages
+    let assistantMessageID = session.appendAssistantPlaceholder()
+    currentAssistantMessageID = assistantMessageID
+    requestState = .sending
+
+    let syntheticMessages = historyBeforeInjection + [ChatMessage(role: .user, text: assistantPrompt)]
+
+    streamTask = Task { [weak self, session, llmClient] in
+      guard let self else { return }
+      do {
+        try await llmClient.streamCompletion(messages: syntheticMessages) { delta in
+          session.appendText(delta, toMessageWithID: assistantMessageID)
+        }
+        self.finishStreaming()
+      } catch is CancellationError {
+        self.handleStreamCancellation(forMessageWithID: assistantMessageID)
+      } catch {
+        self.handleStreamFailure(error, forMessageWithID: assistantMessageID)
+      }
+    }
+  }
+
   private func userFacingMessage(for error: Error) -> String {
     if let localizedError = error as? LocalizedError,
       let description = localizedError.errorDescription,

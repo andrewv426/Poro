@@ -191,13 +191,12 @@ final class PoroController {
   }
 
   /// Called when a distraction is detected during a focus session.
-  /// Injects a user bubble describing the drift and streams a Poro response.
+  /// Streams a Poro response without adding a synthetic user bubble to history.
   func injectDistractionMessage(activity: ActivityContext) {
     guard let session = focusSessionController.activeSession else { return }
     focusPanelRoute = .chat
-    let userText = "I drifted to \(activity.distractionLabel)"
-    let prompt = "You're working on '\(session.goal)' and just switched to \(activity.distractionLabel). Gently redirect me back without being preachy — one or two sentences max."
-    focusChatController.injectDistractionExchange(userText: userText, assistantPrompt: prompt)
+    let prompt = "The user is working on '\(session.goal)' and opened \(activity.distractionLabel). A focus guard is asking the user to either close the tab or explain why it needs to stay open. Address the user directly as 'you'. Do not speak as the user or use first-person wording like 'I', 'me', or 'my'. Gently redirect them back without being preachy — one or two sentences max."
+    focusChatController.injectAssistantPrompt(prompt)
   }
 
   private func handleSessionCommand(

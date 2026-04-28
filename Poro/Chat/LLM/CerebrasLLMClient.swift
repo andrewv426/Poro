@@ -25,18 +25,24 @@ struct CerebrasLLMClient: LLMClient, Sendable {
     messages: [ChatMessage],
     onDelta: @escaping @MainActor @Sendable (String) -> Void
   ) async throws {
-    var systemPrompt = await toolbox?.systemPrompt
+    var systemPrompt = baseSystemPrompt
 
     // Eagerly fetch and inject context if tools are offered for this turn.
-    if let toolbox, await toolbox.shouldOfferTools(for: messages) {
-      let context = await toolbox.fetchAllContext()
-      systemPrompt = systemPrompt?.replacingOccurrences(of: "{{CONTEXT}}", with: context)
-      
-      await toolbox.recordToolEvent(
-        phase: "eager_context_injected",
-        toolName: nil,
-        detail: "Context size: \(context.count) chars"
-      )
+    if let toolbox {
+      var toolboxPrompt = toolbox.systemPrompt
+
+      if await toolbox.shouldOfferTools(for: messages) {
+        let context = await toolbox.fetchAllContext()
+        toolboxPrompt = toolboxPrompt.replacingOccurrences(of: "{{CONTEXT}}", with: context)
+
+        await toolbox.recordToolEvent(
+          phase: "eager_context_injected",
+          toolName: nil,
+          detail: "Context size: \(context.count) chars"
+        )
+      }
+
+      systemPrompt += "\n\n" + toolboxPrompt
     }
 
     try await streamPlainCompletion(
@@ -44,6 +50,15 @@ struct CerebrasLLMClient: LLMClient, Sendable {
       systemPrompt: systemPrompt,
       onDelta: onDelta
     )
+  }
+
+  private var baseSystemPrompt: String {
+    """
+    You are Poro, a macOS assistant that is actively backed by an LLM.
+    The chat completion provider is Cerebras.
+    The configured model for this request is \(configuration.model).
+    If the user asks whether you are running an LLM or what model you use, answer directly using this information.
+    """
   }
 
   /// Performs a standard streaming chat completion.

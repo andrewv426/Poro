@@ -18,22 +18,29 @@ final class FocusSessionController {
   private(set) var state: State = .idle
   private(set) var activeSession: FocusSession?
   private(set) var latestSummary: SessionSummary?
+  private(set) var pendingDistraction: PendingDistraction?
   private var isNudgeActive: Bool = false
   private(set) var overrideEndsAt: Date?
 
   // Callbacks for UI and state updates.
   var onDistractionDetected: ((ActivityContext) -> Void)?
+  var onDistractionResolved: (() -> Void)?
   var onSessionStateChange: (() -> Void)?
   var onStatusItemUpdate: (() -> Void)?
   var onSummaryAvailable: ((SessionSummary) -> Void)?
 
   // Internal managers and monitors.
   private let decisionClient: FocusDecisionEvaluating
+  private let classificationClient: DistractionClassifying
   private let activityMonitor: FrontmostActivityMonitor
   private let driftWatchdog: DriftWatchdog
   private let distractionPolicy: DistractionPolicy
   private let timer = FocusTimer()
   private let logger = SessionActivityLogger()
+  private let browserContextProvider = BrowserTabContextProvider()
+  private var pendingDistractionTask: Task<Void, Never>?
+  private var classificationTask: Task<Void, Never>?
+  private let classificationThreshold = 0.72
 
   // Internal state for activity tracking.
   private var nudgeEvents: [NudgeEvent] = []
@@ -44,11 +51,13 @@ final class FocusSessionController {
   /// Initializes the controller and starts the activity monitor.
   init(
     decisionClient: FocusDecisionEvaluating,
+    classificationClient: DistractionClassifying,
     activityMonitor: FrontmostActivityMonitor,
     driftWatchdog: DriftWatchdog,
     distractionPolicy: DistractionPolicy
   ) {
     self.decisionClient = decisionClient
+    self.classificationClient = classificationClient
     self.activityMonitor = activityMonitor
     self.driftWatchdog = driftWatchdog
     self.distractionPolicy = distractionPolicy
@@ -75,16 +84,22 @@ final class FocusSessionController {
   /// Convenience initializer with standard dependencies.
   convenience init() {
     let decisionClient: FocusDecisionEvaluating
+    let classificationClient: DistractionClassifying
 
     do {
       let configuration = try LLMConfiguration.loadFromEnvironment()
-      decisionClient = CerebrasFocusDecisionClient(configuration: configuration)
+      let cerebrasClient = CerebrasFocusDecisionClient(configuration: configuration)
+      decisionClient = cerebrasClient
+      classificationClient = cerebrasClient
     } catch {
-      decisionClient = UnavailableFocusDecisionClient(error: error)
+      let unavailableClient = UnavailableFocusDecisionClient(error: error)
+      decisionClient = unavailableClient
+      classificationClient = unavailableClient
     }
 
     self.init(
       decisionClient: decisionClient,
+      classificationClient: classificationClient,
       activityMonitor: FrontmostActivityMonitor(),
       driftWatchdog: DriftWatchdog(),
       distractionPolicy: DistractionPolicy()
@@ -160,12 +175,15 @@ final class FocusSessionController {
     
     state = .active
     latestSummary = nil
+    pendingDistraction = nil
     overrideEndsAt = nil
     nudgeEvents.removeAll()
     logger.reset()
     lastProductiveActivity = nil
     lastSeenActivity = nil
     pendingNudgeActivity = nil
+    classificationTask?.cancel()
+    classificationTask = nil
     
     clearNudge()
     timer.start(minutes: resolvedDuration)
@@ -178,6 +196,9 @@ final class FocusSessionController {
     state = .paused
     timer.stop()
     driftWatchdog.cancel()
+    classificationTask?.cancel()
+    classificationTask = nil
+    pendingDistractionTask?.cancel()
     clearNudge()
     notifySessionStateChange()
   }
@@ -199,6 +220,7 @@ final class FocusSessionController {
   /// Dismisses the session completion summary and returns to idle state.
   func dismissSummary() {
     latestSummary = nil
+    pendingDistraction = nil
     if state == .completed {
       state = .idle
     }
@@ -231,7 +253,75 @@ final class FocusSessionController {
 
   /// Clears the active distraction/nudge state, allowing new distractions to be detected.
   func clearDistractionState() {
+    guard pendingDistraction == nil else { return }
     clearNudge()
+  }
+
+  func beginExplainingPendingDistraction() {
+    guard pendingDistraction?.resolution == .pending else { return }
+    pendingDistractionTask?.cancel()
+    pendingDistractionTask = nil
+    pendingDistraction?.isExplaining = true
+    pendingDistraction?.remainingSeconds = 0
+  }
+
+  func updatePendingDistractionJustification(_ text: String) {
+    pendingDistraction?.justificationDraft = text
+  }
+
+  func allowPendingDistraction(minutes: Int = 5) {
+    guard var pendingDistraction else { return }
+
+    let justification = pendingDistraction.justificationDraft
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !justification.isEmpty else { return }
+
+    pendingDistractionTask?.cancel()
+    pendingDistractionTask = nil
+    pendingDistraction.resolution = .allowed
+    self.pendingDistraction = pendingDistraction
+    overrideEndsAt = Date().addingTimeInterval(TimeInterval(minutes * 60))
+
+    nudgeEvents.append(
+      NudgeEvent(
+        occurredAt: Date(),
+        applicationName: pendingDistraction.label,
+        justification: justification,
+        outcome: .allowed(minutes)
+      )
+    )
+
+    clearPendingDistraction()
+    onDistractionResolved?()
+    notifySessionStateChange()
+  }
+
+  func closePendingDistraction(manual: Bool) {
+    guard var pendingDistraction, pendingDistraction.resolution == .pending else { return }
+    pendingDistractionTask?.cancel()
+    pendingDistractionTask = nil
+
+    guard
+      let targetURL = pendingDistraction.targetURL,
+      let browser = browserContextProvider.browser(for: pendingDistraction.activity.bundleIdentifier)
+    else {
+      pendingDistraction.resolution = .failed("Poro can only close supported browser tabs.")
+      self.pendingDistraction = pendingDistraction
+      return
+    }
+
+    pendingDistraction.resolution = .closing
+    self.pendingDistraction = pendingDistraction
+
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      let result = await self.browserContextProvider.closeActiveTabIfMatching(
+        for: browser,
+        targetURL: targetURL,
+        processIdentifier: pendingDistraction.activity.processIdentifier
+      )
+      self.handleCloseTabResult(result, for: pendingDistraction, manual: manual)
+    }
   }
 
   // MARK: - Activity Handling
@@ -261,16 +351,41 @@ final class FocusSessionController {
     }
 
     // 4. Evaluate distraction policy.
-    if let distractionHit = distractionPolicy.evaluate(activity: activity, goal: session.goal) {
+    if let distractionHit = distractionPolicy.staticHit(activity: activity) {
       if pendingNudgeActivity == activity { return }
+      classificationTask?.cancel()
+      classificationTask = nil
+      scheduleDistractionWatchdog(for: activity, reason: distractionHit.reason)
+    } else if distractionPolicy.needsLLMClassification(activity: activity) {
+      classifyAmbiguousActivity(activity, session: session)
+    } else {
+      markActivityAllowed(activity)
+    }
+  }
 
-      pendingNudgeActivity = activity
-      let returnPid = lastProductiveActivity?.processIdentifier
+  private func classifyAmbiguousActivity(_ activity: ActivityContext, session: FocusSession) {
+    if pendingNudgeActivity == activity { return }
 
-      // Use a watchdog to debounce accidental clicks (fires after 2s of continuous distraction).
-      driftWatchdog.schedule { [weak self] in
+    driftWatchdog.cancel()
+    classificationTask?.cancel()
+    pendingNudgeActivity = activity
+
+    let goal = session.goal
+    let remainingMinutes = max(1, timer.remainingSeconds / 60)
+
+    classificationTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+
+      do {
+        let classification = try await self.classificationClient.classifyDistraction(
+          goal: goal,
+          remainingMinutes: remainingMinutes,
+          activity: activity
+        )
+
         guard
-          let self,
+          !Task.isCancelled,
+          self.pendingNudgeActivity == activity,
           self.state == .active,
           !self.isNudgeActive,
           !self.isOverrideActive
@@ -278,31 +393,78 @@ final class FocusSessionController {
           return
         }
 
-        self.presentNudge(
-          for: activity,
-          reason: distractionHit.reason,
-          returnToProcessIdentifier: returnPid
-        )
+        self.classificationTask = nil
+
+        if classification.verdict == .distract,
+          classification.score >= self.classificationThreshold
+        {
+          self.scheduleDistractionWatchdog(for: activity, reason: classification.reason)
+        } else {
+          self.markActivityAllowed(activity)
+        }
+      } catch {
+        guard !Task.isCancelled else { return }
+        self.markActivityAllowed(activity)
       }
-    } else {
-      driftWatchdog.cancel()
-      pendingNudgeActivity = nil
-      lastProductiveActivity = activity
     }
+  }
+
+  private func scheduleDistractionWatchdog(for activity: ActivityContext, reason: String) {
+    pendingNudgeActivity = activity
+    let returnPid = lastProductiveActivity?.processIdentifier
+
+    // Use a watchdog to debounce accidental clicks (fires after 2s of continuous distraction).
+    driftWatchdog.schedule { [weak self] in
+      guard
+        let self,
+        self.state == .active,
+        !self.isNudgeActive,
+        !self.isOverrideActive
+      else {
+        return
+      }
+
+      self.presentNudge(
+        for: activity,
+        reason: reason,
+        returnToProcessIdentifier: returnPid
+      )
+    }
+  }
+
+  private func markActivityAllowed(_ activity: ActivityContext) {
+    driftWatchdog.cancel()
+    classificationTask?.cancel()
+    classificationTask = nil
+
+    if pendingNudgeActivity == activity {
+      pendingNudgeActivity = nil
+    }
+
+    lastProductiveActivity = activity
   }
 
   /// Fires the distraction callback so the window layer can expand and inject the chat message.
   private func presentNudge(for activity: ActivityContext, reason: String, returnToProcessIdentifier: Int32?) {
     isNudgeActive = true
     pendingNudgeActivity = nil
-    nudgeEvents.append(
-      NudgeEvent(
-        occurredAt: Date(),
-        applicationName: activity.distractionLabel,
-        justification: nil,
-        outcome: .backToWork
+
+    if
+      activity.pageURL != nil,
+      browserContextProvider.browser(for: activity.bundleIdentifier) != nil
+    {
+      startPendingDistraction(for: activity, reason: reason)
+    } else {
+      nudgeEvents.append(
+        NudgeEvent(
+          occurredAt: Date(),
+          applicationName: activity.distractionLabel,
+          justification: nil,
+          outcome: .backToWork
+        )
       )
-    )
+    }
+
     onDistractionDetected?(activity)
   }
 
@@ -319,6 +481,8 @@ final class FocusSessionController {
   private func finishSession(session: FocusSession) {
     timer.stop()
     driftWatchdog.cancel()
+    classificationTask?.cancel()
+    classificationTask = nil
     clearNudge()
 
     let summary = SessionSummary(
@@ -360,6 +524,81 @@ final class FocusSessionController {
     isNudgeActive = false
     pendingNudgeActivity = nil
     driftWatchdog.cancel()
+    classificationTask?.cancel()
+    classificationTask = nil
+  }
+
+  private func startPendingDistraction(for activity: ActivityContext, reason: String) {
+    let deadline = Date().addingTimeInterval(10)
+    pendingDistractionTask?.cancel()
+    pendingDistraction = PendingDistraction(
+      activity: activity,
+      reason: reason,
+      detectedAt: Date(),
+      deadline: deadline,
+      remainingSeconds: 10
+    )
+    schedulePendingDistractionTimeout(id: pendingDistraction?.id)
+  }
+
+  private func schedulePendingDistractionTimeout(id: PendingDistraction.ID?) {
+    pendingDistractionTask = Task { @MainActor [weak self] in
+      while let self, self.pendingDistraction?.id == id {
+        guard let pendingDistraction = self.pendingDistraction else { return }
+
+        if pendingDistraction.isExplaining {
+          return
+        }
+
+        let remaining = max(0, Int(ceil(pendingDistraction.deadline.timeIntervalSinceNow)))
+        self.pendingDistraction?.remainingSeconds = remaining
+
+        if remaining <= 0 {
+          self.closePendingDistraction(manual: false)
+          return
+        }
+
+        try? await Task.sleep(for: .seconds(1))
+      }
+    }
+  }
+
+  private func handleCloseTabResult(
+    _ result: BrowserTabContextProvider.CloseTabResult,
+    for pendingDistraction: PendingDistraction,
+    manual: Bool
+  ) {
+    guard self.pendingDistraction?.id == pendingDistraction.id else { return }
+
+    switch result {
+    case .closed:
+      nudgeEvents.append(
+        NudgeEvent(
+          occurredAt: Date(),
+          applicationName: pendingDistraction.label,
+          justification: manual ? "Closed manually" : "Closed automatically after timeout",
+          outcome: .denied
+        )
+      )
+      self.pendingDistraction?.resolution = .closed
+      clearPendingDistraction()
+      onDistractionResolved?()
+    case .urlMismatch:
+      self.pendingDistraction?.resolution = .failed("The active tab changed, so Poro did not close it.")
+      clearNudge()
+    case .failed(let message):
+      self.pendingDistraction?.resolution = .failed(message)
+      clearNudge()
+    }
+
+    notifySessionStateChange()
+  }
+
+  private func clearPendingDistraction() {
+    pendingDistractionTask?.cancel()
+    pendingDistractionTask = nil
+    pendingDistraction = nil
+    clearNudge()
   }
 
   private func notifySessionStateChange() {

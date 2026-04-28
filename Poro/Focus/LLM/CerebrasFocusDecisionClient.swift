@@ -1,6 +1,6 @@
 import Foundation
 
-struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, Sendable {
+struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassifying, Sendable {
   let configuration: LLMConfiguration
   private let session: URLSession
 
@@ -206,6 +206,188 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, Sendable {
       verdict: .deny,
       message: payload.message,
       allowMinutes: nil
+    )
+  }
+
+  nonisolated func classifyDistraction(
+    goal: String,
+    remainingMinutes: Int,
+    activity: ActivityContext
+  ) async throws -> DistractionClassification {
+    struct RequestMessage: Encodable, Sendable {
+      let role: String
+      let content: String
+    }
+
+    struct ChatCompletionsRequest: Encodable, Sendable {
+      struct ResponseFormat: Encodable, Sendable {
+        struct JSONSchemaConfiguration: Encodable, Sendable {
+          let name: String
+          let strict: Bool
+          let schema: Schema
+        }
+
+        struct Schema: Encodable, Sendable {
+          let type: String
+          let properties: [String: Property]
+          let required: [String]
+          let additionalProperties: Bool
+        }
+
+        struct Property: Encodable, Sendable {
+          let type: String?
+          let enumValues: [String]?
+
+          enum CodingKeys: String, CodingKey {
+            case type
+            case enumValues = "enum"
+          }
+        }
+
+        let type: String
+        let jsonSchema: JSONSchemaConfiguration
+
+        enum CodingKeys: String, CodingKey {
+          case type
+          case jsonSchema = "json_schema"
+        }
+      }
+
+      let model: String
+      let messages: [RequestMessage]
+      let responseFormat: ResponseFormat
+      let temperature: Double
+
+      enum CodingKeys: String, CodingKey {
+        case model
+        case messages
+        case responseFormat = "response_format"
+        case temperature
+      }
+    }
+
+    struct ChatCompletionsResponse: Decodable, Sendable {
+      struct Choice: Decodable, Sendable {
+        struct Message: Decodable, Sendable {
+          let content: String
+        }
+
+        let message: Message
+      }
+
+      let choices: [Choice]
+    }
+
+    struct ClassificationPayload: Decodable, Sendable {
+      let verdict: String
+      let score: Double
+      let reason: String
+    }
+
+    struct ErrorResponse: Decodable, Sendable {
+      let error: APIError
+    }
+
+    struct APIError: Decodable, Sendable {
+      let message: String?
+    }
+
+    let requestURL = configuration.baseURL.appendingPathComponent("chat/completions")
+    var request = URLRequest(url: requestURL)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+
+    let responseFormat = ChatCompletionsRequest.ResponseFormat(
+      type: "json_schema",
+      jsonSchema: .init(
+        name: "distraction_classification",
+        strict: true,
+        schema: .init(
+          type: "object",
+          properties: [
+            "verdict": .init(type: "string", enumValues: ["allow", "distract"]),
+            "score": .init(type: "number", enumValues: nil),
+            "reason": .init(type: "string", enumValues: nil),
+          ],
+          required: ["verdict", "score", "reason"],
+          additionalProperties: false
+        )
+      )
+    )
+
+    let systemPrompt = """
+      You classify whether a browser tab is distracting for the user's current focus session.
+      Use the goal, URL, host, and page title. Mark distract for unrelated entertainment, social media,
+      shopping, news, idle browsing, or obvious avoidance. Mark allow for docs, research, work tools,
+      educational material, or anything plausibly necessary for the stated goal.
+      Score is the probability from 0.0 to 1.0 that this tab is distracting.
+      Be conservative near ambiguity: allow unless the tab is likely unrelated to the goal.
+      Return JSON only.
+      """
+
+    let userPrompt = """
+      Goal: \(goal)
+      Remaining minutes: \(remainingMinutes)
+      Application: \(activity.applicationName)
+      URL: \(activity.pageURL?.absoluteString ?? "unknown")
+      Host: \(activity.pageHost ?? "unknown")
+      Title: \(activity.pageTitle ?? "unknown")
+
+      Return JSON only.
+      """
+
+    let requestBody = ChatCompletionsRequest(
+      model: configuration.model,
+      messages: [
+        .init(role: "system", content: systemPrompt),
+        .init(role: "user", content: userPrompt),
+      ],
+      responseFormat: responseFormat,
+      temperature: 0
+    )
+    request.httpBody = try JSONEncoder().encode(requestBody)
+
+    let data: Data
+    let response: URLResponse
+
+    do {
+      (data, response) = try await session.data(for: request)
+    } catch {
+      let urlError = error as? URLError
+      throw LLMError.networkFailure(
+        description: error.localizedDescription,
+        code: urlError?.errorCode,
+        url: requestURL.absoluteString
+      )
+    }
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw LLMError.invalidResponse
+    }
+
+    guard (200...299).contains(httpResponse.statusCode) else {
+      let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+      throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
+    }
+
+    let completion = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
+
+    guard
+      let content = completion.choices.first?.message.content.data(using: .utf8)
+    else {
+      throw LLMError.emptyResponse
+    }
+
+    let payload = try JSONDecoder().decode(ClassificationPayload.self, from: content)
+    let verdict: DistractionClassification.Verdict =
+      payload.verdict.lowercased() == "distract" ? .distract : .allow
+    let score = min(1, max(0, payload.score))
+
+    return DistractionClassification(
+      verdict: verdict,
+      score: score,
+      reason: payload.reason
     )
   }
 }

@@ -7,17 +7,23 @@ struct ContentView: View {
 
   private let onDismissRequest: () -> Void
   private let onPanelHeightChange: (CGFloat) -> Void
+  private let onFocusTabDragChanged: () -> Void
+  private let onFocusTabDragEnded: () -> Void
 
   init(
     poroController: PoroController,
     context: AssistantPanelContext = .normal,
     onDismissRequest: @escaping () -> Void = {},
-    onPanelHeightChange: @escaping (CGFloat) -> Void = { _ in }
+    onPanelHeightChange: @escaping (CGFloat) -> Void = { _ in },
+    onFocusTabDragChanged: @escaping () -> Void = {},
+    onFocusTabDragEnded: @escaping () -> Void = {}
   ) {
     self.poroController = poroController
     self.context = context
     self.onDismissRequest = onDismissRequest
     self.onPanelHeightChange = onPanelHeightChange
+    self.onFocusTabDragChanged = onFocusTabDragChanged
+    self.onFocusTabDragEnded = onFocusTabDragEnded
   }
 
   private var totalHeight: CGFloat {
@@ -54,7 +60,11 @@ struct ContentView: View {
   var body: some View {
     Group {
       if context == .focus && poroController.isFocusPanelTucked {
-        FocusTabView(isSessionActive: poroController.isFocusSessionActive)
+        FocusTabView(
+          isSessionActive: poroController.isFocusSessionActive,
+          onDragChanged: onFocusTabDragChanged,
+          onDragEnded: onFocusTabDragEnded
+        )
           .frame(width: PoroTheme.focusWidth, height: PoroTheme.tabHeight, alignment: .leading)
       } else {
         let panelWidth = context == .focus ? PoroTheme.focusWidth : PoroTheme.width
@@ -134,6 +144,25 @@ struct ContentView: View {
         )
         .padding(.top, 8)
         .transition(.opacity.combined(with: .move(edge: .top)))
+
+        if context == .focus, let pendingDistraction = poroController.focusSessionController.pendingDistraction {
+          DistractionDecisionView(
+            pendingDistraction: pendingDistraction,
+            justificationDraft: pendingDistractionJustificationBinding,
+            onCloseTab: {
+              poroController.focusSessionController.closePendingDistraction(manual: true)
+            },
+            onExplain: {
+              poroController.focusSessionController.beginExplainingPendingDistraction()
+            },
+            onSubmitJustification: {
+              poroController.focusSessionController.allowPendingDistraction()
+            }
+          )
+          .padding(.horizontal, 14)
+          .padding(.bottom, 8)
+          .transition(.opacity.combined(with: .move(edge: .top)))
+        }
 
         MessagesListView(
           messages: poroController.chatController(for: context).messages,
@@ -230,6 +259,180 @@ struct ContentView: View {
   private var didShowNotificationName: Notification.Name {
     context == .focus ? .focusAssistantWindowDidShow : .normalAssistantWindowDidShow
   }
+
+  private var pendingDistractionJustificationBinding: Binding<String> {
+    Binding(
+      get: {
+        poroController.focusSessionController.pendingDistraction?.justificationDraft ?? ""
+      },
+      set: { draft in
+        poroController.focusSessionController.updatePendingDistractionJustification(draft)
+      }
+    )
+  }
+}
+
+private struct DistractionDecisionView: View {
+  let pendingDistraction: PendingDistraction
+  @Binding var justificationDraft: String
+  let onCloseTab: () -> Void
+  let onExplain: () -> Void
+  let onSubmitJustification: () -> Void
+
+  private var canSubmitJustification: Bool {
+    !justificationDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  private var isClosing: Bool {
+    if case .closing = pendingDistraction.resolution {
+      return true
+    }
+    return false
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text("Distracting tab")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(PoroTheme.accent)
+            .textCase(.uppercase)
+
+          Text(pendingDistraction.label)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(PoroTheme.bodyText)
+            .lineLimit(1)
+        }
+
+        Spacer(minLength: 8)
+
+        if pendingDistraction.resolution == .pending && !pendingDistraction.isExplaining {
+          Text("\(pendingDistraction.remainingSeconds)s")
+            .font(.system(size: 13, weight: .bold, design: .monospaced))
+            .foregroundStyle(PoroTheme.stopColor)
+        }
+      }
+
+      switch pendingDistraction.resolution {
+      case .pending, .closing:
+        if pendingDistraction.isExplaining {
+          explanationControls
+        } else {
+          decisionControls
+        }
+      case .closed:
+        statusText("Tab closed.")
+      case .allowed:
+        statusText("Allowed for now.")
+      case .failed(let message):
+        statusText(message)
+      }
+    }
+    .padding(12)
+    .background(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(Color.white.opacity(0.055))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+    )
+  }
+
+  private var decisionControls: some View {
+    HStack(spacing: 8) {
+      decisionButton(
+        title: isClosing ? "Closing..." : "Close tab",
+        foreground: .black,
+        background: PoroTheme.accent,
+        isDisabled: isClosing,
+        action: onCloseTab
+      )
+
+      decisionButton(
+        title: "Explain why",
+        foreground: PoroTheme.bodyText,
+        background: PoroTheme.hoverBackground,
+        isDisabled: isClosing,
+        action: onExplain
+      )
+    }
+  }
+
+  private var explanationControls: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextField(
+        "Break, emergency, educational content...",
+        text: $justificationDraft
+      )
+      .textFieldStyle(.plain)
+      .font(.system(size: 13, weight: .medium))
+      .foregroundStyle(PoroTheme.bodyText)
+      .padding(.horizontal, 10)
+      .frame(height: 34)
+      .background(
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+          .fill(Color.black.opacity(0.18))
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+          .stroke(Color.white.opacity(0.08), lineWidth: 1)
+      )
+      .onSubmit {
+        if canSubmitJustification {
+          onSubmitJustification()
+        }
+      }
+
+      HStack(spacing: 8) {
+        decisionButton(
+          title: "Allow 5m",
+          foreground: .black,
+          background: PoroTheme.accent,
+          isDisabled: !canSubmitJustification,
+          action: onSubmitJustification
+        )
+
+        decisionButton(
+          title: isClosing ? "Closing..." : "Close tab",
+          foreground: PoroTheme.bodyText,
+          background: PoroTheme.hoverBackground,
+          isDisabled: isClosing,
+          action: onCloseTab
+        )
+      }
+    }
+  }
+
+  private func statusText(_ text: String) -> some View {
+    Text(text)
+      .font(.system(size: 12, weight: .medium))
+      .foregroundStyle(PoroTheme.mutedText)
+      .lineLimit(2)
+  }
+
+  private func decisionButton(
+    title: String,
+    foreground: Color,
+    background: Color,
+    isDisabled: Bool,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      Text(title)
+        .font(.system(size: 12.5, weight: .semibold))
+        .foregroundStyle(foreground.opacity(isDisabled ? 0.5 : 1))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(background.opacity(isDisabled ? 0.45 : 1))
+        )
+    }
+    .buttonStyle(.plain)
+    .disabled(isDisabled)
+  }
 }
 
 private struct ComposerHintStripView: View {
@@ -263,6 +466,9 @@ private struct SessionStatusStripView: View {
 
 private struct FocusTabView: View {
   let isSessionActive: Bool
+  let onDragChanged: () -> Void
+  let onDragEnded: () -> Void
+
   @State private var pulse = false
 
   var body: some View {
@@ -295,6 +501,16 @@ private struct FocusTabView: View {
           .frame(width: 22, height: 22)
       }
       .frame(width: PoroTheme.tabVisibleWidth, height: PoroTheme.tabHeight)
+      .contentShape(Rectangle())
+      .gesture(
+        DragGesture(minimumDistance: 1)
+          .onChanged { _ in
+            onDragChanged()
+          }
+          .onEnded { _ in
+            onDragEnded()
+          }
+      )
       .onAppear { pulse = true }
     }
   }
