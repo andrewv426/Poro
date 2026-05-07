@@ -9,7 +9,7 @@ current impl features: (macOS)
 
 Focus session
 - grabs info regarding focused tabs; passes to LLM to check if focused tab is related to designated focus session task
-- if LLm returns confidence threshold above 0.75, will trigger an event giving user 10 seconds with two choices
+- if LLM returns confidence threshold above 0.75, will trigger an event giving user 10 seconds with two choices
   - user can close tab
   - user can justify why they have this tab open (i.e break/emergency)
 - else
