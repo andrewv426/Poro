@@ -39,6 +39,16 @@ Distraction detection runs while a focus session is active. It uses static rules
 
 Loaded by `LLMConfiguration.loadFromEnvironment()`.
 
+### Build note — Xcode 26.1.1 workarounds
+
+Two pbxproj-level changes work around Xcode 26.1.1 IDE-only linker bugs. Neither affects `xcodebuild` from the CLI.
+
+1. **`ENABLE_DEBUG_DYLIB = NO`** in both Debug and Release. Default (`YES`) makes the IDE's `Link __preview.dylib` aux phase fail with `cannot get absolute path for: rpath/Poro.debug.dylib` — the linker is asked to emit a dylib with install_name `@rpath/Poro.debug.dylib` but supplied no `-rpath` entries.
+
+2. **`LD_RUNPATH_SEARCH_PATHS = "$(inherited)"`** — the boilerplate `@executable_path/../Frameworks` entry has been removed. Xcode 26.1.1's IDE-side linker validates that rpath directories exist at link time; since Poro uses only static SPM dependencies (no dynamic frameworks copied to `Poro.app/Contents/Frameworks/`), the directory doesn't exist and the linker aborts with `cannot get absolute path for: executable_path/../Frameworks`. CLI `ld` doesn't run this validation. `$(inherited)` retains the auto-added PackageFrameworks rpath.
+
+When Apple ships fixes for these bugs in a future Xcode release, both changes can be reverted to restore IDE fast-debug-link and the boilerplate Frameworks rpath.
+
 ### Repo layout
 
 | Path | Contents |
