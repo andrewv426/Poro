@@ -45,9 +45,12 @@ struct LLMConfiguration {
 
   /// Overlays values from `~/.config/poro/env` underneath the process environment so Xcode scheme
   /// env vars still win when set, but worktrees without scheme vars fall back to the user-global file.
+  ///
+  /// Empty process-env values do NOT override the file — Xcode schemes ship with placeholder
+  /// entries like `CEREBRAS_API_KEY=""` for discoverability, and we want the file to win in that case.
   private static func mergedEnvironment() -> [String: String] {
     var merged = EnvFileLoader.load()
-    for (key, value) in ProcessInfo.processInfo.environment {
+    for (key, value) in ProcessInfo.processInfo.environment where !value.isEmpty {
       merged[key] = value
     }
     return merged
