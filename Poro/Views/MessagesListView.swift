@@ -59,7 +59,7 @@ private struct MessageBlockView: View {
 
       HStack(alignment: .lastTextBaseline, spacing: 4) {
         Text(message.text.isEmpty && showStreamingCursor ? " " : message.text)
-          .font(.system(size: 14.5, weight: .regular))
+          .font(PoroTheme.font(size: 14.5, weight: .regular))
           .lineSpacing(5)
           .foregroundStyle(
             message.role == .assistant ? PoroTheme.assistantBodyText : PoroTheme.bodyText

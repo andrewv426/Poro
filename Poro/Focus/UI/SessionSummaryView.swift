@@ -8,14 +8,14 @@ struct SessionSummaryView: View {
     VStack(alignment: .leading, spacing: 18) {
       HStack {
         Text("Session summary")
-          .font(.system(size: 18, weight: .semibold))
+          .font(PoroTheme.font(size: 18, weight: .semibold))
           .foregroundStyle(PoroTheme.bodyText)
 
         Spacer()
 
         Button("Done", action: onClose)
           .buttonStyle(.plain)
-          .font(.system(size: 13, weight: .medium))
+          .font(PoroTheme.font(size: 13, weight: .medium))
           .foregroundStyle(PoroTheme.mutedText)
       }
 
@@ -29,12 +29,12 @@ struct SessionSummaryView: View {
       if !summary.memorableArguments.isEmpty {
         VStack(alignment: .leading, spacing: 8) {
           Text("Memorable arguments")
-            .font(.system(size: 12, weight: .medium))
+            .font(PoroTheme.font(size: 12, weight: .medium))
             .foregroundStyle(PoroTheme.mutedText)
 
           ForEach(summary.memorableArguments, id: \.self) { argument in
             Text("• \(argument)")
-              .font(.system(size: 13, weight: .medium))
+              .font(PoroTheme.font(size: 13, weight: .medium))
               .foregroundStyle(PoroTheme.assistantBodyText)
           }
         }
@@ -47,10 +47,10 @@ struct SessionSummaryView: View {
   private func summaryRow(_ label: String, value: String) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(label)
-        .font(.system(size: 12, weight: .medium))
+        .font(PoroTheme.font(size: 12, weight: .medium))
         .foregroundStyle(PoroTheme.mutedText)
       Text(value)
-        .font(.system(size: 14, weight: .semibold))
+        .font(PoroTheme.font(size: 14, weight: .semibold))
         .foregroundStyle(PoroTheme.bodyText)
     }
   }

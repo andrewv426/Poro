@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import KeyboardShortcuts
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -7,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItemController: StatusItemController?
 
   func applicationDidFinishLaunching(_: Notification) {
+    registerBundledFonts()
+
     let poroController = PoroController()
     self.poroController = poroController
 
@@ -31,6 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       Task { @MainActor in
         self?.assistantWindowController?.toggleVisibility()
       }
+    }
+  }
+
+  private func registerBundledFonts() {
+    let names = ["RadioCanada-Regular", "RadioCanada-Medium", "RadioCanada-SemiBold", "RadioCanada-Bold"]
+    for name in names {
+      guard let url = Bundle.main.url(forResource: name, withExtension: "ttf") else { continue }
+      CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
     }
   }
 }

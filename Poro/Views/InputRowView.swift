@@ -30,7 +30,7 @@ struct InputRowView: View {
           .foregroundStyle(PoroTheme.mutedText)
       )
       .textFieldStyle(.plain)
-      .font(.system(size: 15, weight: .regular))
+      .font(PoroTheme.font(size: 15, weight: .regular))
       .foregroundStyle(PoroTheme.bodyText)
       .focused($isFocused)
       .submitLabel(.send)

@@ -17,7 +17,7 @@ struct TopToolbarView: View {
 
       if let statusLine, !statusLine.isEmpty {
         Text(statusLine)
-          .font(.system(size: 11.5, weight: .medium))
+          .font(PoroTheme.font(size: 11.5, weight: .medium))
           .foregroundStyle(PoroTheme.mutedText)
           .lineLimit(1)
           .padding(.leading, 10)

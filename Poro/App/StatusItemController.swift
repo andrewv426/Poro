@@ -26,7 +26,17 @@ final class StatusItemController {
   func update() {
     let isVisible = focusSessionController.hasActiveSession
     statusItem.isVisible = isVisible
-    statusItem.button?.title = focusSessionController.statusItemText ?? ""
+    guard let button = statusItem.button else { return }
+
+    let text = focusSessionController.statusItemText ?? ""
+    let mint = NSColor(srgbRed: 168 / 255, green: 230 / 255, blue: 201 / 255, alpha: 1)
+    button.attributedTitle = NSAttributedString(
+      string: text,
+      attributes: [
+        .foregroundColor: mint,
+        .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
+      ]
+    )
   }
 
   @objc private func handleActivate() {

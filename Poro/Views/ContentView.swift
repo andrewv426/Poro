@@ -172,7 +172,7 @@ struct ContentView: View {
 
         if let errorMessage = poroController.chatController(for: context).errorMessage {
           Text(errorMessage)
-            .font(.system(size: 12, weight: .medium))
+            .font(PoroTheme.font(size: 12, weight: .medium))
             .foregroundStyle(PoroTheme.stopColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
@@ -197,7 +197,14 @@ struct ContentView: View {
   }
 
   private var showsFooterStrip: Bool {
-    poroController.route(for: context) == .chat && !poroController.isChatExpanded(in: context)
+    guard poroController.route(for: context) == .chat,
+          !poroController.isChatExpanded(in: context)
+    else { return false }
+
+    if poroController.composerHint(for: context) != nil { return true }
+    if context == .focus, poroController.isFocusSessionActive,
+       poroController.sessionStatusLine != nil { return true }
+    return false
   }
 
   @ViewBuilder
@@ -208,8 +215,6 @@ struct ContentView: View {
               let statusLine = poroController.sessionStatusLine
     {
       SessionStatusStripView(statusLine: statusLine)
-    } else {
-      HintView()
     }
   }
 
@@ -297,12 +302,12 @@ private struct DistractionDecisionView: View {
       HStack(alignment: .firstTextBaseline, spacing: 10) {
         VStack(alignment: .leading, spacing: 3) {
           Text("Distracting tab")
-            .font(.system(size: 11, weight: .semibold))
+            .font(PoroTheme.font(size: 11, weight: .semibold))
             .foregroundStyle(PoroTheme.accent)
             .textCase(.uppercase)
 
           Text(pendingDistraction.label)
-            .font(.system(size: 14, weight: .semibold))
+            .font(PoroTheme.font(size: 14, weight: .semibold))
             .foregroundStyle(PoroTheme.bodyText)
             .lineLimit(1)
         }
@@ -334,11 +339,11 @@ private struct DistractionDecisionView: View {
     .padding(12)
     .background(
       RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(Color.white.opacity(0.055))
+        .fill(PoroTheme.hoverBackground)
     )
     .overlay(
       RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        .stroke(PoroTheme.innerBorder, lineWidth: 1)
     )
   }
 
@@ -346,7 +351,7 @@ private struct DistractionDecisionView: View {
     HStack(spacing: 8) {
       decisionButton(
         title: isClosing ? "Closing..." : "Close tab",
-        foreground: .black,
+        foreground: PoroTheme.onAccent,
         background: PoroTheme.accent,
         isDisabled: isClosing,
         action: onCloseTab
@@ -369,17 +374,17 @@ private struct DistractionDecisionView: View {
         text: $justificationDraft
       )
       .textFieldStyle(.plain)
-      .font(.system(size: 13, weight: .medium))
+      .font(PoroTheme.font(size: 13, weight: .medium))
       .foregroundStyle(PoroTheme.bodyText)
       .padding(.horizontal, 10)
       .frame(height: 34)
       .background(
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-          .fill(Color.black.opacity(0.18))
+          .fill(PoroTheme.windowTint)
       )
       .overlay(
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-          .stroke(Color.white.opacity(0.08), lineWidth: 1)
+          .stroke(PoroTheme.innerBorder, lineWidth: 1)
       )
       .onSubmit {
         if canSubmitJustification {
@@ -390,7 +395,7 @@ private struct DistractionDecisionView: View {
       HStack(spacing: 8) {
         decisionButton(
           title: "Allow 5m",
-          foreground: .black,
+          foreground: PoroTheme.onAccent,
           background: PoroTheme.accent,
           isDisabled: !canSubmitJustification,
           action: onSubmitJustification
@@ -409,7 +414,7 @@ private struct DistractionDecisionView: View {
 
   private func statusText(_ text: String) -> some View {
     Text(text)
-      .font(.system(size: 12, weight: .medium))
+      .font(PoroTheme.font(size: 12, weight: .medium))
       .foregroundStyle(PoroTheme.mutedText)
       .lineLimit(2)
   }
@@ -423,7 +428,7 @@ private struct DistractionDecisionView: View {
   ) -> some View {
     Button(action: action) {
       Text(title)
-        .font(.system(size: 12.5, weight: .semibold))
+        .font(PoroTheme.font(size: 12.5, weight: .semibold))
         .foregroundStyle(foreground.opacity(isDisabled ? 0.5 : 1))
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
@@ -442,7 +447,7 @@ private struct ComposerHintStripView: View {
 
   var body: some View {
     Text(title)
-      .font(.system(size: 12, weight: .medium))
+      .font(PoroTheme.font(size: 12, weight: .medium))
       .foregroundStyle(PoroTheme.accent)
   }
 }
@@ -457,8 +462,8 @@ private struct SessionStatusStripView: View {
         .frame(width: 8, height: 8)
 
       Text(statusLine)
-        .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(Color.white.opacity(0.44))
+        .font(PoroTheme.font(size: 12, weight: .medium))
+        .foregroundStyle(PoroTheme.mutedText)
         .lineLimit(1)
     }
   }
@@ -479,7 +484,7 @@ private struct FocusTabView: View {
 
       ZStack {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(Color(red: 22 / 255, green: 22 / 255, blue: 28 / 255).opacity(0.88))
+          .fill(PoroTheme.tabBackground)
           .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
               .stroke(PoroTheme.innerBorder, lineWidth: 1)

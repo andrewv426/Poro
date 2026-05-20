@@ -17,16 +17,18 @@ enum PoroTheme {
   static let windowCornerRadius: CGFloat = 14
   static let messageSpacing: CGFloat = 24
 
-  static let accent = Color(red: 232 / 255, green: 212 / 255, blue: 168 / 255)
+  static let accent = Color(red: 168 / 255, green: 230 / 255, blue: 201 / 255)
+  static let onAccent = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255)
   static let stopColor = Color(red: 251 / 255, green: 113 / 255, blue: 133 / 255)
-  static let bodyText = Color.white.opacity(0.92)
-  static let assistantBodyText = Color.white.opacity(0.85)
-  static let mutedText = Color.white.opacity(0.40)
-  static let traceText = Color.white.opacity(0.08)
-  static let divider = Color.white.opacity(0.06)
-  static let innerBorder = Color.white.opacity(0.08)
+  static let bodyText = Color(red: 237 / 255, green: 237 / 255, blue: 237 / 255)
+  static let assistantBodyText = Color(red: 237 / 255, green: 237 / 255, blue: 237 / 255).opacity(0.85)
+  static let mutedText = Color(red: 153 / 255, green: 153 / 255, blue: 153 / 255)
+  static let traceText = Color(red: 153 / 255, green: 153 / 255, blue: 153 / 255).opacity(0.5)
+  static let divider = Color(red: 42 / 255, green: 42 / 255, blue: 42 / 255)
+  static let innerBorder = Color(red: 42 / 255, green: 42 / 255, blue: 42 / 255)
   static let hoverBackground = Color.white.opacity(0.06)
-  static let windowTint = Color(red: 22 / 255, green: 22 / 255, blue: 28 / 255).opacity(0.62)
+  static let windowTint = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255).opacity(0.62)
+  static let tabBackground = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255).opacity(0.88)
 
   static let shellAnimation = Animation.interactiveSpring(
     response: 0.28,
@@ -34,6 +36,26 @@ enum PoroTheme {
     blendDuration: 0.12
   )
   static let fadeAnimation = Animation.easeOut(duration: 0.22)
+
+  static func font(size: CGFloat, weight: PoroFontWeight = .regular) -> Font {
+    Font.custom(weight.postScriptName, size: size)
+  }
+}
+
+enum PoroFontWeight {
+  case regular
+  case medium
+  case semibold
+  case bold
+
+  var postScriptName: String {
+    switch self {
+    case .regular: "RadioCanada-Regular"
+    case .medium: "RadioCanada-Medium"
+    case .semibold: "RadioCanada-SemiBold"
+    case .bold: "RadioCanada-Bold"
+    }
+  }
 }
 
 extension Notification.Name {
