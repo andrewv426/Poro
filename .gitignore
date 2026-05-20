@@ -3,6 +3,10 @@
 Poro.xcodeproj/xcuserdata/
 *.xcuserstate
 
+# Bundled env file (real API keys). EnvFileLoader reads this from the app bundle
+# at runtime because the sandbox blocks ~/.config/poro/env. Per-developer.
+Poro/Poro.env
+
 # Build artifacts
 build/
 DerivedData/

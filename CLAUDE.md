@@ -30,10 +30,12 @@ Distraction detection runs while a focus session is active. It uses static rules
 
 ### Environment variables
 
-Two sources, layered (process env wins on conflict):
+Two sources, layered (non-empty process env wins on conflict):
 
-1. **`~/.config/poro/env`** — user-global dotenv file (`KEY=VALUE` per line, `#` comments). Set once, every worktree picks it up. Recommended.
+1. **`Poro/Poro.env`** — dotenv-style file (`KEY=VALUE` per line, `#` comments) bundled into the app at build time via Xcode's filesystem-synchronized group. Gitignored. Per-worktree (copy or symlink from `~/.config/poro/env`). Required path because the app is sandboxed and cannot read arbitrary home-directory files at runtime.
 2. **Xcode scheme env vars** — Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables. Per-user values live in `xcuserdata/` (gitignored). Convenient for one-off overrides.
+
+For a new worktree, run: `ln -s ~/.config/poro/env Poro/Poro.env` (or `cp`). `~/.config/poro/env` itself is the source of truth for your keys; `Poro/Poro.env` is the bundled copy.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
