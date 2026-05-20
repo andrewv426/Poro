@@ -3,14 +3,19 @@ import SwiftUI
 struct FocusSetupView: View {
   @Bindable var poroController: PoroController
   @FocusState private var isGoalFocused: Bool
+  @FocusState private var isCustomFocused: Bool
+  @State private var isCustomActive: Bool = false
+  @State private var customDraft: String = ""
 
-  private let durationOptions = [25, 50, 90]
+  private let durationOptions = PoroController.durationPresets
+  private let minCustomMinutes = 1
+  private let maxCustomMinutes = 240
 
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
       HStack {
         Text("Start focus session")
-          .font(.system(size: 18, weight: .semibold))
+          .font(PoroTheme.font(size: 18, weight: .semibold))
           .foregroundStyle(PoroTheme.bodyText)
 
         Spacer()
@@ -19,13 +24,13 @@ struct FocusSetupView: View {
           poroController.cancelFocusSetup()
         }
         .buttonStyle(.plain)
-        .font(.system(size: 13, weight: .medium))
+        .font(PoroTheme.font(size: 13, weight: .medium))
         .foregroundStyle(PoroTheme.mutedText)
       }
 
       VStack(alignment: .leading, spacing: 8) {
         Text("What are you working on?")
-          .font(.system(size: 12, weight: .medium))
+          .font(PoroTheme.font(size: 12, weight: .medium))
           .foregroundStyle(PoroTheme.mutedText)
 
         TextField(
@@ -38,73 +43,141 @@ struct FocusSetupView: View {
 
       VStack(alignment: .leading, spacing: 8) {
         Text("Duration")
-          .font(.system(size: 12, weight: .medium))
+          .font(PoroTheme.font(size: 12, weight: .medium))
           .foregroundStyle(PoroTheme.mutedText)
 
-        HStack(spacing: 10) {
-          ForEach(durationOptions, id: \.self) { minutes in
+        if isCustomActive {
+          HStack(spacing: 10) {
+            TextField("Minutes", text: $customDraft)
+              .textFieldStyle(.roundedBorder)
+              .focused($isCustomFocused)
+              .onChange(of: customDraft) { _, newValue in
+                applyCustomDraft(newValue)
+              }
+
             Button {
-              poroController.focusSetupDraft.durationMinutes = minutes
+              isCustomActive = false
+              let fallback = durationOptions.contains(poroController.focusSetupDraft.durationMinutes)
+                ? poroController.focusSetupDraft.durationMinutes
+                : (durationOptions.first ?? 45)
+              poroController.focusSetupDraft.durationMinutes = fallback
             } label: {
-              Text("\(minutes)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(
-                  poroController.focusSetupDraft.durationMinutes == minutes
-                    ? Color.black : PoroTheme.bodyText
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+              Text("Presets")
+                .font(PoroTheme.font(size: 13, weight: .semibold))
+                .foregroundStyle(PoroTheme.bodyText)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
                 .background(
                   RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(
-                      poroController.focusSetupDraft.durationMinutes == minutes
-                        ? PoroTheme.accent : PoroTheme.hoverBackground
-                    )
+                    .fill(PoroTheme.hoverBackground)
                 )
             }
             .buttonStyle(.plain)
           }
+        } else {
+          HStack(spacing: 10) {
+            ForEach(durationOptions, id: \.self) { minutes in
+              presetChip(minutes: minutes)
+            }
+            customChip
+          }
         }
       }
 
-      HStack(spacing: 10) {
-        Button {
-          poroController.confirmFocusSetup()
-        } label: {
-          Text("Confirm")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.black)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(
-              RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(PoroTheme.accent)
-            )
-        }
-        .buttonStyle(.plain)
-
-        Button {
-          poroController.cancelFocusSetup()
-        } label: {
-          Text("Edit later")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(PoroTheme.bodyText)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(
-              RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(PoroTheme.hoverBackground)
-            )
-        }
-        .buttonStyle(.plain)
+      Button {
+        poroController.confirmFocusSetup()
+      } label: {
+        Text("Confirm")
+          .font(PoroTheme.font(size: 13, weight: .semibold))
+          .foregroundStyle(PoroTheme.onAccent)
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, 10)
+          .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+              .fill(PoroTheme.accent)
+          )
       }
+      .buttonStyle(.plain)
     }
     .padding(20)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear {
+      let current = poroController.focusSetupDraft.durationMinutes
+      if !durationOptions.contains(current) {
+        isCustomActive = true
+        customDraft = String(current)
+      } else if let remembered = poroController.lastCustomDurationMinutes {
+        customDraft = String(remembered)
+      }
       DispatchQueue.main.async {
         isGoalFocused = true
       }
     }
+  }
+
+  private func presetChip(minutes: Int) -> some View {
+    let isSelected = !isCustomActive
+      && poroController.focusSetupDraft.durationMinutes == minutes
+
+    return Button {
+      isCustomActive = false
+      poroController.focusSetupDraft.durationMinutes = minutes
+    } label: {
+      Text("\(minutes)")
+        .font(PoroTheme.font(size: 13, weight: .semibold))
+        .foregroundStyle(isSelected ? PoroTheme.onAccent : PoroTheme.bodyText)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(isSelected ? PoroTheme.accent : PoroTheme.hoverBackground)
+        )
+    }
+    .buttonStyle(.plain)
+  }
+
+  private var customChip: some View {
+    let label: String = {
+      if isCustomActive, let value = Int(customDraft), value > 0 {
+        return "\(value)"
+      }
+      if let remembered = poroController.lastCustomDurationMinutes {
+        return "\(remembered)"
+      }
+      return "Custom"
+    }()
+
+    return Button {
+      isCustomActive = true
+      if customDraft.isEmpty, let remembered = poroController.lastCustomDurationMinutes {
+        customDraft = String(remembered)
+      }
+      applyCustomDraft(customDraft)
+      DispatchQueue.main.async {
+        isCustomFocused = true
+      }
+    } label: {
+      Text(label)
+        .font(PoroTheme.font(size: 13, weight: .semibold))
+        .foregroundStyle(isCustomActive ? PoroTheme.onAccent : PoroTheme.bodyText)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(isCustomActive ? PoroTheme.accent : PoroTheme.hoverBackground)
+        )
+    }
+    .buttonStyle(.plain)
+  }
+
+  private func applyCustomDraft(_ raw: String) {
+    let digits = raw.filter(\.isNumber)
+    if digits != raw {
+      customDraft = digits
+      return
+    }
+    guard let value = Int(digits) else { return }
+    let clamped = max(minCustomMinutes, min(maxCustomMinutes, value))
+    poroController.focusSetupDraft.durationMinutes = clamped
   }
 }

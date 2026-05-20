@@ -25,6 +25,13 @@ final class PoroController {
   var onPresentRequested: (() -> Void)?
 
   private let intentRouter: AppIntentRouter
+  private let customDurationKey = "focus.customDurationMinutes"
+  static let durationPresets = [25, 45, 60]
+
+  var lastCustomDurationMinutes: Int? {
+    let value = UserDefaults.standard.integer(forKey: customDurationKey)
+    return value > 0 ? value : nil
+  }
 
   init(
     chatController: ChatController,
@@ -172,7 +179,11 @@ final class PoroController {
 
   func confirmFocusSetup() {
     let goal = focusSetupDraft.goal.trimmingCharacters(in: .whitespacesAndNewlines)
-    let duration = max(1, focusSetupDraft.durationMinutes)
+    let duration = max(1, min(240, focusSetupDraft.durationMinutes))
+
+    if !PoroController.durationPresets.contains(duration) {
+      UserDefaults.standard.set(duration, forKey: customDurationKey)
+    }
 
     focusSessionController.startSession(goal: goal, durationMinutes: duration)
     panelRoute = .chat

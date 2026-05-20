@@ -27,7 +27,7 @@ struct AppIntentParser {
       return nil
     }
 
-    let durationMinutes = duration ?? 50
+    let durationMinutes = duration ?? 45
     let goal = parseFocusGoal(from: text)
 
     // Ensure there is enough context to justify transitioning to the focus setup screen.
@@ -95,26 +95,28 @@ struct AppIntentParser {
     return rawValue
   }
 
-  /// Extracts the focus goal by stripping out session-related verbs and duration patterns.
+  /// Extracts the focus goal only when the user supplies an explicit ` on <goal>` or
+  /// ` for <goal>` clause. Anything else returns an empty string so the setup screen
+  /// does not display garbled prefill produced by scrubbing trigger phrases out of
+  /// the whole input (e.g. "I want to start a focus session" used to yield "I want to a").
   /// - Parameter text: The user's input text.
-  /// - Returns: A cleaned string representing the user's intended focus goal.
+  /// - Returns: The extracted goal, or "" when no confident extraction is possible.
   func parseFocusGoal(from text: String) -> String {
-    var goal = text
     let lowercased = text.lowercased()
+    var goal: String
 
-    // Identify the goal portion using common separators.
     if let range = lowercased.range(of: " on ") {
       goal = String(text[range.upperBound...])
     } else if let range = lowercased.range(of: " for ") {
       goal = String(text[range.upperBound...])
 
-      // If "for" is followed by a duration, the goal might be empty or come before it.
       if parseDuration(from: goal) != nil {
-        goal = ""
+        return ""
       }
+    } else {
+      return ""
     }
 
-    // Strip out the duration pattern.
     goal = durationPattern.stringByReplacingMatches(
       in: goal,
       options: [],
@@ -122,22 +124,6 @@ struct AppIntentParser {
       withTemplate: ""
     )
 
-    // Clean up residual command verbs.
-    let strippedPhrases = [
-      "start focus session",
-      "focus session",
-      "focus",
-      "lock in",
-      "keep me focused",
-      "stay off",
-      "for the next",
-      "for",
-    ]
-
-    let cleaned = strippedPhrases.reduce(goal) { partial, phrase in
-      partial.replacingOccurrences(of: phrase, with: "", options: .caseInsensitive)
-    }
-
-    return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    return goal.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
