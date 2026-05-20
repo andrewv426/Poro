@@ -6,7 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var assistantWindowController: AssistantWindowController?
   private var statusItemController: StatusItemController?
 
-  func applicationDidFinishLaunching(_ notification: Notification) {
+  func applicationDidFinishLaunching(_: Notification) {
     let poroController = PoroController()
     self.poroController = poroController
 

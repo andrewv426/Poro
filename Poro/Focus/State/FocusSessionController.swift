@@ -6,7 +6,6 @@ import Observation
 @Observable
 @MainActor
 final class FocusSessionController {
-  
   /// Possible states for a focus session.
   enum State: Equatable {
     case idle
@@ -66,7 +65,7 @@ final class FocusSessionController {
     activityMonitor.onActivityChange = { [weak self] activity in
       self?.handleActivityChange(activity)
     }
-    
+
     // Wire up timer events.
     timer.onTick = { [weak self] _ in
       self?.tick()
@@ -172,7 +171,7 @@ final class FocusSessionController {
       durationMinutes: resolvedDuration,
       startedAt: Date()
     )
-    
+
     state = .active
     latestSummary = nil
     pendingDistraction = nil
@@ -184,7 +183,7 @@ final class FocusSessionController {
     pendingNudgeActivity = nil
     classificationTask?.cancel()
     classificationTask = nil
-    
+
     clearNudge()
     timer.start(minutes: resolvedDuration)
     notifySessionStateChange()
@@ -315,12 +314,12 @@ final class FocusSessionController {
 
     Task { @MainActor [weak self] in
       guard let self else { return }
-      let result = await self.browserContextProvider.closeActiveTabIfMatching(
+      let result = await browserContextProvider.closeActiveTabIfMatching(
         for: browser,
         targetURL: targetURL,
         processIdentifier: pendingDistraction.activity.processIdentifier
       )
-      self.handleCloseTabResult(result, for: pendingDistraction, manual: manual)
+      handleCloseTabResult(result, for: pendingDistraction, manual: manual)
     }
   }
 
@@ -377,7 +376,7 @@ final class FocusSessionController {
       guard let self else { return }
 
       do {
-        let classification = try await self.classificationClient.classifyDistraction(
+        let classification = try await classificationClient.classifyDistraction(
           goal: goal,
           remainingMinutes: remainingMinutes,
           activity: activity
@@ -385,26 +384,26 @@ final class FocusSessionController {
 
         guard
           !Task.isCancelled,
-          self.pendingNudgeActivity == activity,
-          self.state == .active,
-          !self.isNudgeActive,
-          !self.isOverrideActive
+          pendingNudgeActivity == activity,
+          state == .active,
+          !isNudgeActive,
+          !isOverrideActive
         else {
           return
         }
 
-        self.classificationTask = nil
+        classificationTask = nil
 
         if classification.verdict == .distract,
-          classification.score >= self.classificationThreshold
+           classification.score >= classificationThreshold
         {
-          self.scheduleDistractionWatchdog(for: activity, reason: classification.reason)
+          scheduleDistractionWatchdog(for: activity, reason: classification.reason)
         } else {
-          self.markActivityAllowed(activity)
+          markActivityAllowed(activity)
         }
       } catch {
         guard !Task.isCancelled else { return }
-        self.markActivityAllowed(activity)
+        markActivityAllowed(activity)
       }
     }
   }
@@ -417,14 +416,14 @@ final class FocusSessionController {
     driftWatchdog.schedule { [weak self] in
       guard
         let self,
-        self.state == .active,
+        state == .active,
         !self.isNudgeActive,
         !self.isOverrideActive
       else {
         return
       }
 
-      self.presentNudge(
+      presentNudge(
         for: activity,
         reason: reason,
         returnToProcessIdentifier: returnPid
@@ -445,7 +444,7 @@ final class FocusSessionController {
   }
 
   /// Fires the distraction callback so the window layer can expand and inject the chat message.
-  private func presentNudge(for activity: ActivityContext, reason: String, returnToProcessIdentifier: Int32?) {
+  private func presentNudge(for activity: ActivityContext, reason: String, returnToProcessIdentifier _: Int32?) {
     isNudgeActive = true
     pendingNudgeActivity = nil
 
@@ -469,7 +468,6 @@ final class FocusSessionController {
   }
 
   // MARK: - Private Helpers
-
 
   private func tick() {
     if let overrideEndsAt, overrideEndsAt <= Date() {
@@ -543,8 +541,8 @@ final class FocusSessionController {
 
   private func schedulePendingDistractionTimeout(id: PendingDistraction.ID?) {
     pendingDistractionTask = Task { @MainActor [weak self] in
-      while let self, self.pendingDistraction?.id == id {
-        guard let pendingDistraction = self.pendingDistraction else { return }
+      while let self, pendingDistraction?.id == id {
+        guard let pendingDistraction else { return }
 
         if pendingDistraction.isExplaining {
           return
@@ -554,7 +552,7 @@ final class FocusSessionController {
         self.pendingDistraction?.remainingSeconds = remaining
 
         if remaining <= 0 {
-          self.closePendingDistraction(manual: false)
+          closePendingDistraction(manual: false)
           return
         }
 
@@ -586,7 +584,7 @@ final class FocusSessionController {
     case .urlMismatch:
       self.pendingDistraction?.resolution = .failed("The active tab changed, so Poro did not close it.")
       clearNudge()
-    case .failed(let message):
+    case let .failed(message):
       self.pendingDistraction?.resolution = .failed(message)
       clearNudge()
     }
@@ -677,9 +675,9 @@ final class FocusSessionController {
 
   private func describeOutcome(_ outcome: NudgeEvent.Outcome) -> String {
     switch outcome {
-    case .backToWork: return "back_to_work"
-    case .allowed(let minutes): return "allowed_\(minutes)_minutes"
-    case .denied: return "denied"
+    case .backToWork: "back_to_work"
+    case let .allowed(minutes): "allowed_\(minutes)_minutes"
+    case .denied: "denied"
     }
   }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-struct DistractionHit: Equatable, Sendable {
+struct DistractionHit: Equatable {
   let applicationName: String
   let reason: String
 }
@@ -38,7 +38,7 @@ struct DistractionPolicy {
 
   func staticHit(activity: ActivityContext) -> DistractionHit? {
     if let bundleIdentifier = activity.bundleIdentifier,
-      alwaysDistractingBundleIdentifiers.contains(bundleIdentifier)
+       alwaysDistractingBundleIdentifiers.contains(bundleIdentifier)
     {
       return DistractionHit(
         applicationName: activity.applicationName,
@@ -47,10 +47,10 @@ struct DistractionPolicy {
     }
 
     if let bundleIdentifier = activity.bundleIdentifier,
-      browserBundleIdentifiers.contains(bundleIdentifier)
+       browserBundleIdentifiers.contains(bundleIdentifier)
     {
       if let host = activity.pageHost,
-        isDistractingHost(host)
+         isDistractingHost(host)
       {
         return DistractionHit(
           applicationName: host,

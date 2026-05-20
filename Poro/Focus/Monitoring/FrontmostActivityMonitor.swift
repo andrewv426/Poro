@@ -31,7 +31,7 @@ final class FrontmostActivityMonitor {
           return
         }
 
-        self.handleActivatedApplication(app)
+        handleActivatedApplication(app)
       }
     }
 
@@ -80,8 +80,8 @@ final class FrontmostActivityMonitor {
 
     Task { @MainActor [weak self] in
       guard let self else { return }
-      let activity = await self.enrichedActivity(from: baseActivity, browser: browser)
-      self.emit(activity)
+      let activity = await enrichedActivity(from: baseActivity, browser: browser)
+      emit(activity)
     }
     startBrowserPolling(for: browser, processIdentifier: application.processIdentifier)
   }
@@ -100,20 +100,20 @@ final class FrontmostActivityMonitor {
           return
         }
 
-        guard let activeBrowser = self.browserContextProvider.browser(for: frontmostApplication.bundleIdentifier),
-          activeBrowser == browser
+        guard let activeBrowser = browserContextProvider.browser(for: frontmostApplication.bundleIdentifier),
+              activeBrowser == browser
         else {
-          self.browserPollTimer?.invalidate()
-          self.browserPollTimer = nil
-          self.emit(self.activityFor(frontmostApplication))
+          browserPollTimer?.invalidate()
+          browserPollTimer = nil
+          emit(activityFor(frontmostApplication))
           return
         }
 
-        let activity = await self.enrichedActivity(
-          from: self.activityFor(frontmostApplication),
+        let activity = await enrichedActivity(
+          from: activityFor(frontmostApplication),
           browser: activeBrowser
         )
-        self.emit(activity)
+        emit(activity)
       }
     }
   }

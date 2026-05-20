@@ -27,7 +27,7 @@ struct ContentView: View {
   }
 
   private var totalHeight: CGFloat {
-    if context == .focus && poroController.isFocusPanelTucked { return PoroTheme.tabHeight }
+    if context == .focus, poroController.isFocusPanelTucked { return PoroTheme.tabHeight }
     let focus = context == .focus
     switch poroController.route(for: context) {
     case .chat:
@@ -59,13 +59,13 @@ struct ContentView: View {
 
   var body: some View {
     Group {
-      if context == .focus && poroController.isFocusPanelTucked {
+      if context == .focus, poroController.isFocusPanelTucked {
         FocusTabView(
           isSessionActive: poroController.isFocusSessionActive,
           onDragChanged: onFocusTabDragChanged,
           onDragEnded: onFocusTabDragEnded
         )
-          .frame(width: PoroTheme.focusWidth, height: PoroTheme.tabHeight, alignment: .leading)
+        .frame(width: PoroTheme.focusWidth, height: PoroTheme.tabHeight, alignment: .leading)
       } else {
         let panelWidth = context == .focus ? PoroTheme.focusWidth : PoroTheme.width
         VStack(spacing: showsFooterStrip ? 12 : 0) {
@@ -204,7 +204,9 @@ struct ContentView: View {
   private var footerStrip: some View {
     if let composerHint = poroController.composerHint(for: context) {
       ComposerHintStripView(title: composerHint.title)
-    } else if context == .focus, poroController.isFocusSessionActive, let statusLine = poroController.sessionStatusLine {
+    } else if context == .focus, poroController.isFocusSessionActive,
+              let statusLine = poroController.sessionStatusLine
+    {
       SessionStatusStripView(statusLine: statusLine)
     } else {
       HintView()
@@ -307,7 +309,7 @@ private struct DistractionDecisionView: View {
 
         Spacer(minLength: 8)
 
-        if pendingDistraction.resolution == .pending && !pendingDistraction.isExplaining {
+        if pendingDistraction.resolution == .pending, !pendingDistraction.isExplaining {
           Text("\(pendingDistraction.remainingSeconds)s")
             .font(.system(size: 13, weight: .bold, design: .monospaced))
             .foregroundStyle(PoroTheme.stopColor)
@@ -325,7 +327,7 @@ private struct DistractionDecisionView: View {
         statusText("Tab closed.")
       case .allowed:
         statusText("Allowed for now.")
-      case .failed(let message):
+      case let .failed(message):
         statusText(message)
       }
     }
@@ -477,7 +479,7 @@ private struct FocusTabView: View {
 
       ZStack {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(Color(red: 22/255, green: 22/255, blue: 28/255).opacity(0.88))
+          .fill(Color(red: 22 / 255, green: 22 / 255, blue: 28 / 255).opacity(0.88))
           .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
               .stroke(PoroTheme.innerBorder, lineWidth: 1)

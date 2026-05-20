@@ -337,13 +337,11 @@ final class AssistantWindowController {
 
   private func normalFrame() -> NSRect {
     let screenFrame = normalPanel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-    let topLeft: CGPoint
-
-    switch panelPlacement {
+    let topLeft: CGPoint = switch panelPlacement {
     case .automatic:
-      topLeft = automaticTopLeft(in: screenFrame)
-    case .manual(let storedTopLeft):
-      topLeft = clampedTopLeft(storedTopLeft, in: screenFrame)
+      automaticTopLeft(in: screenFrame)
+    case let .manual(storedTopLeft):
+      clampedTopLeft(storedTopLeft, in: screenFrame)
     }
 
     return NSRect(
@@ -414,7 +412,7 @@ final class AssistantWindowController {
   }
 
   private func expectedTotalHeight(for context: AssistantPanelContext) -> CGFloat {
-    if context == .focus && poroController.isFocusPanelTucked {
+    if context == .focus, poroController.isFocusPanelTucked {
       return PoroTheme.tabHeight
     }
 
@@ -438,7 +436,7 @@ final class AssistantWindowController {
     guard localKeyMonitor == nil else { return }
     localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
       guard let self else { return event }
-      return self.handleKeyboardEvent(event)
+      return handleKeyboardEvent(event)
     }
   }
 
@@ -453,9 +451,9 @@ final class AssistantWindowController {
 
     switch event.keyCode {
     case 123: nudgeNormalPanel(dx: -KeyboardMove.step, dy: 0); return nil
-    case 124: nudgeNormalPanel(dx:  KeyboardMove.step, dy: 0); return nil
+    case 124: nudgeNormalPanel(dx: KeyboardMove.step, dy: 0); return nil
     case 125: nudgeNormalPanel(dx: 0, dy: -KeyboardMove.step); return nil
-    case 126: nudgeNormalPanel(dx: 0, dy:  KeyboardMove.step); return nil
+    case 126: nudgeNormalPanel(dx: 0, dy: KeyboardMove.step); return nil
     default: return event
     }
   }
@@ -523,7 +521,7 @@ final class AssistantWindowController {
       defaults.set("automatic", forKey: DefaultsKey.panelPlacementMode)
       defaults.removeObject(forKey: DefaultsKey.panelPlacementX)
       defaults.removeObject(forKey: DefaultsKey.panelPlacementY)
-    case .manual(let topLeft):
+    case let .manual(topLeft):
       defaults.set("manual", forKey: DefaultsKey.panelPlacementMode)
       defaults.set(topLeft.x, forKey: DefaultsKey.panelPlacementX)
       defaults.set(topLeft.y, forKey: DefaultsKey.panelPlacementY)

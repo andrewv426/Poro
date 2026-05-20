@@ -1,0 +1,4 @@
+--indent 2
+--maxwidth 120
+--swiftversion 5.9
+--exclude Poro.xcodeproj,build,design_handoff_poro

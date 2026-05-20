@@ -51,7 +51,7 @@ final class ChatController {
   }
 
   var errorMessage: String? {
-    if case .failed(let message) = requestState {
+    if case let .failed(message) = requestState {
       return message
     }
 
@@ -85,11 +85,11 @@ final class ChatController {
         try await llmClient.streamCompletion(messages: messages) { [session] delta in
           session.appendText(delta, toMessageWithID: assistantMessageID)
         }
-        self.finishStreaming()
+        finishStreaming()
       } catch is CancellationError {
-        self.handleStreamCancellation(forMessageWithID: assistantMessageID)
+        handleStreamCancellation(forMessageWithID: assistantMessageID)
       } catch {
-        self.handleStreamFailure(error, forMessageWithID: assistantMessageID)
+        handleStreamFailure(error, forMessageWithID: assistantMessageID)
       }
     }
   }
@@ -142,11 +142,11 @@ final class ChatController {
         try await llmClient.streamCompletion(messages: syntheticMessages) { delta in
           session.appendText(delta, toMessageWithID: assistantMessageID)
         }
-        self.finishStreaming()
+        finishStreaming()
       } catch is CancellationError {
-        self.handleStreamCancellation(forMessageWithID: assistantMessageID)
+        handleStreamCancellation(forMessageWithID: assistantMessageID)
       } catch {
-        self.handleStreamFailure(error, forMessageWithID: assistantMessageID)
+        handleStreamFailure(error, forMessageWithID: assistantMessageID)
       }
     }
   }
@@ -169,19 +169,19 @@ final class ChatController {
         try await llmClient.streamCompletion(messages: syntheticMessages) { delta in
           session.appendText(delta, toMessageWithID: assistantMessageID)
         }
-        self.finishStreaming()
+        finishStreaming()
       } catch is CancellationError {
-        self.handleStreamCancellation(forMessageWithID: assistantMessageID)
+        handleStreamCancellation(forMessageWithID: assistantMessageID)
       } catch {
-        self.handleStreamFailure(error, forMessageWithID: assistantMessageID)
+        handleStreamFailure(error, forMessageWithID: assistantMessageID)
       }
     }
   }
 
   private func userFacingMessage(for error: Error) -> String {
     if let localizedError = error as? LocalizedError,
-      let description = localizedError.errorDescription,
-      !description.isEmpty
+       let description = localizedError.errorDescription,
+       !description.isEmpty
     {
       return description
     }

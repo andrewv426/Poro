@@ -1,6 +1,6 @@
 import Foundation
 
-struct SessionSummary: Equatable, Sendable {
+struct SessionSummary: Equatable {
   let goal: String
   let startedAt: Date
   let endedAt: Date

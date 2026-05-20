@@ -58,13 +58,13 @@ struct AppIntentRouter {
   private func sessionCommandHint(for command: SessionCommand) -> String {
     switch command {
     case .pause:
-      return "↵ Pause focus session"
+      "↵ Pause focus session"
     case .resume:
-      return "↵ Resume focus session"
+      "↵ Resume focus session"
     case .end:
-      return "↵ End focus session"
+      "↵ End focus session"
     case .status:
-      return "↵ Show session status"
+      "↵ Show session status"
     }
   }
 }

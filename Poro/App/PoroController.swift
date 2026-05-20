@@ -105,7 +105,7 @@ final class PoroController {
   func prepareForPresentation(in context: AssistantPanelContext) {
     switch context {
     case .normal:
-      if panelRoute != .summary && panelRoute != .focusSetup {
+      if panelRoute != .summary, panelRoute != .focusSetup {
         panelRoute = .chat
       }
     case .focus:
@@ -145,12 +145,12 @@ final class PoroController {
     )
 
     switch intent {
-    case .chat(let message):
+    case let .chat(message):
       setRoute(.chat, in: context)
       setComposerDraft("", in: context)
       setComposerHint(nil, in: context)
       chatController(for: context).send(message)
-    case .startFocus(let draft):
+    case let .startFocus(draft):
       setComposerDraft("", in: context)
       setComposerHint(nil, in: context)
       focusSetupDraft = FocusStartDraft(
@@ -158,7 +158,7 @@ final class PoroController {
         durationMinutes: draft.durationMinutes
       )
       panelRoute = .focusSetup
-    case .sessionCommand(let command):
+    case let .sessionCommand(command):
       setComposerDraft("", in: context)
       setComposerHint(nil, in: context)
       handleSessionCommand(command, originalText: trimmed, in: context)

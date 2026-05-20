@@ -1,7 +1,7 @@
 import Foundation
 
-struct PendingDistraction: Identifiable, Equatable, Sendable {
-  enum Resolution: Equatable, Sendable {
+struct PendingDistraction: Identifiable, Equatable {
+  enum Resolution: Equatable {
     case pending
     case closing
     case closed

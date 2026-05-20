@@ -34,7 +34,7 @@ struct BrowserTabContextProvider {
     let errorDescription: String?
   }
 
-  enum CloseTabResult: Equatable, Sendable {
+  enum CloseTabResult: Equatable {
     case closed
     case urlMismatch(currentURL: String?)
     case failed(String)
@@ -68,13 +68,13 @@ struct BrowserTabContextProvider {
     var applescriptApplicationName: String {
       switch self {
       case .chrome:
-        return "Google Chrome"
+        "Google Chrome"
       case .safari:
-        return "Safari"
+        "Safari"
       case .arc:
-        return "Arc"
+        "Arc"
       case .brave:
-        return "Brave Browser"
+        "Brave Browser"
       }
     }
 
@@ -82,13 +82,13 @@ struct BrowserTabContextProvider {
     var bundleIdentifier: String {
       switch self {
       case .chrome:
-        return "com.google.Chrome"
+        "com.google.Chrome"
       case .safari:
-        return "com.apple.Safari"
+        "com.apple.Safari"
       case .arc:
-        return "company.thebrowser.Browser"
+        "company.thebrowser.Browser"
       case .brave:
-        return "com.brave.Browser"
+        "com.brave.Browser"
       }
     }
 
@@ -96,10 +96,9 @@ struct BrowserTabContextProvider {
     var urlScript: String {
       switch self {
       case .safari:
-        return "tell application id \"\(bundleIdentifier)\" to get URL of current tab of front window"
+        "tell application id \"\(bundleIdentifier)\" to get URL of current tab of front window"
       case .chrome, .arc, .brave:
-        return
-          "tell application id \"\(bundleIdentifier)\" to get URL of active tab of front window"
+        "tell application id \"\(bundleIdentifier)\" to get URL of active tab of front window"
       }
     }
 
@@ -107,10 +106,9 @@ struct BrowserTabContextProvider {
     var titleScript: String {
       switch self {
       case .safari:
-        return "tell application id \"\(bundleIdentifier)\" to get name of current tab of front window"
+        "tell application id \"\(bundleIdentifier)\" to get name of current tab of front window"
       case .chrome, .arc, .brave:
-        return
-          "tell application id \"\(bundleIdentifier)\" to get title of active tab of front window"
+        "tell application id \"\(bundleIdentifier)\" to get title of active tab of front window"
       }
     }
   }
@@ -249,7 +247,10 @@ struct BrowserTabContextProvider {
     case OSStatus(errAEEventNotPermitted):
       logger.warning("Automation permission denied for \(bundleIdentifier)")
     default:
-      logger.error("Automation permission status \(permissionStatus) for \(bundleIdentifier) (pid: \(processIdentifier ?? -1))")
+      logger
+        .error(
+          "Automation permission status \(permissionStatus) for \(bundleIdentifier) (pid: \(processIdentifier ?? -1))"
+        )
     }
 
     return permissionStatus
@@ -261,14 +262,15 @@ struct BrowserTabContextProvider {
   private static func fetchTabSnapshot(browser: BrowserApp) -> TabSnapshot {
     let scriptSource = browser.urlScript
     logger.debug("Fetching tab snapshot for \(browser.applescriptApplicationName) on background thread")
-    
+
     var errorInfo: NSDictionary?
     let script = NSAppleScript(source: scriptSource)
     let result = script?.executeAndReturnError(&errorInfo)
 
     if let errorInfo {
       let message = errorInfo[NSAppleScript.errorMessage] as? String
-      logger.error("AppleScript error for URL (\(browser.applescriptApplicationName)): \(String(describing: errorInfo))")
+      logger
+        .error("AppleScript error for URL (\(browser.applescriptApplicationName)): \(String(describing: errorInfo))")
       return TabSnapshot(url: nil, title: nil, errorDescription: message)
     }
 
@@ -292,7 +294,8 @@ struct BrowserTabContextProvider {
     let result = script?.executeAndReturnError(&errorInfo)
 
     guard errorInfo == nil else {
-      logger.error("AppleScript error for title (\(browser.applescriptApplicationName)): \(String(describing: errorInfo!))")
+      logger
+        .error("AppleScript error for title (\(browser.applescriptApplicationName)): \(String(describing: errorInfo!))")
       return nil
     }
 
@@ -311,7 +314,10 @@ struct BrowserTabContextProvider {
 
     if let errorInfo {
       let message = errorInfo[NSAppleScript.errorMessage] as? String
-      logger.error("AppleScript error closing tab (\(browser.applescriptApplicationName)): \(String(describing: errorInfo))")
+      logger
+        .error(
+          "AppleScript error closing tab (\(browser.applescriptApplicationName)): \(String(describing: errorInfo))"
+        )
       return .failed(message ?? "Failed to close the browser tab.")
     }
 
@@ -337,28 +343,28 @@ private extension BrowserTabContextProvider.BrowserApp {
     switch self {
     case .safari:
       return """
-        tell application id "\(bundleIdentifier)"
-          if (count of windows) is 0 then return "no_window"
-          set currentURL to URL of current tab of front window
-          if currentURL is "\(target)" then
-            close current tab of front window
-            return "closed"
-          end if
-          return "mismatch:" & currentURL
-        end tell
-        """
+      tell application id "\(bundleIdentifier)"
+        if (count of windows) is 0 then return "no_window"
+        set currentURL to URL of current tab of front window
+        if currentURL is "\(target)" then
+          close current tab of front window
+          return "closed"
+        end if
+        return "mismatch:" & currentURL
+      end tell
+      """
     case .chrome, .arc, .brave:
       return """
-        tell application id "\(bundleIdentifier)"
-          if (count of windows) is 0 then return "no_window"
-          set currentURL to URL of active tab of front window
-          if currentURL is "\(target)" then
-            close active tab of front window
-            return "closed"
-          end if
-          return "mismatch:" & currentURL
-        end tell
-        """
+      tell application id "\(bundleIdentifier)"
+        if (count of windows) is 0 then return "no_window"
+        set currentURL to URL of active tab of front window
+        if currentURL is "\(target)" then
+          close active tab of front window
+          return "closed"
+        end if
+        return "mismatch:" & currentURL
+      end tell
+      """
     }
   }
 }

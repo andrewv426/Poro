@@ -11,11 +11,11 @@ enum LLMError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .missingAPIKey(let environmentVariable):
+    case let .missingAPIKey(environmentVariable):
       return "Missing API key. Set \(environmentVariable) in your Xcode scheme environment."
-    case .invalidBaseURL(let baseURL):
+    case let .invalidBaseURL(baseURL):
       return "Invalid Cerebras base URL: \(baseURL)"
-    case .networkFailure(let description, let code, let url):
+    case let .networkFailure(description, code, url):
       var parts = ["Network request failed: \(description)"]
 
       if let code {
@@ -29,7 +29,7 @@ enum LLMError: LocalizedError {
       return parts.joined(separator: " | ")
     case .invalidResponse:
       return "Received an invalid response from Cerebras."
-    case .unexpectedStatusCode(let statusCode, let message):
+    case let .unexpectedStatusCode(statusCode, message):
       if let message, !message.isEmpty {
         return "Cerebras request failed (\(statusCode)): \(message)"
       }
@@ -37,7 +37,7 @@ enum LLMError: LocalizedError {
       return "Cerebras request failed with status code \(statusCode)."
     case .emptyResponse:
       return "Cerebras returned an empty response."
-    case .toolExecutionFailure(let message):
+    case let .toolExecutionFailure(message):
       return "Tool execution failed: \(message)"
     }
   }

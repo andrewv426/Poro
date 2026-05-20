@@ -1,7 +1,7 @@
 import Foundation
 
-struct FocusDecision: Codable, Equatable, Sendable {
-  enum Verdict: String, Codable, Sendable {
+struct FocusDecision: Codable, Equatable {
+  enum Verdict: String, Codable {
     case allow
     case deny
   }
@@ -11,8 +11,8 @@ struct FocusDecision: Codable, Equatable, Sendable {
   let allowMinutes: Int?
 }
 
-struct DistractionClassification: Codable, Equatable, Sendable {
-  enum Verdict: String, Codable, Sendable {
+struct DistractionClassification: Codable, Equatable {
+  enum Verdict: String, Codable {
     case allow
     case distract
   }

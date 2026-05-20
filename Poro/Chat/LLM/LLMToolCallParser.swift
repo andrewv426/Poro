@@ -1,9 +1,8 @@
 import Foundation
 
-/// A parser responsible for identifying and extracting tool calls from LLM responses, 
+/// A parser responsible for identifying and extracting tool calls from LLM responses,
 /// supporting both structured tool calls and "pseudo" tool calls represented in text.
 struct LLMToolCallParser {
-  
   /// Attempts to parse a tool call from content that may be a JSON object.
   /// - Parameters:
   ///   - content: The raw string content from the assistant.
@@ -49,7 +48,8 @@ struct LLMToolCallParser {
     )
   }
 
-  /// Attempts to parse a "pseudo" tool call from natural language content (e.g., when the LLM mentions a tool name in text).
+  /// Attempts to parse a "pseudo" tool call from natural language content (e.g., when the LLM mentions a tool name in
+  /// text).
   /// - Parameters:
   ///   - content: The raw string content from the assistant.
   ///   - validToolNames: The list of tool names recognized by the current toolbox.
@@ -80,16 +80,14 @@ struct LLMToolCallParser {
       return nil
     }
 
-    let arguments: String
-
-    if
+    let arguments = if
       let parametersRange = loweredContent.range(of: "parameters"),
       let jsonStart = normalizedContent[parametersRange.upperBound...].firstIndex(of: "{"),
       let jsonEnd = normalizedContent[jsonStart...].lastIndex(of: "}")
     {
-      arguments = String(normalizedContent[jsonStart...jsonEnd])
+      String(normalizedContent[jsonStart ... jsonEnd])
     } else {
-      arguments = "{}"
+      "{}"
     }
 
     return ResponseToolCall(
@@ -122,8 +120,8 @@ struct LLMToolCallParser {
 }
 
 /// Represents a tool call request from the LLM.
-struct ResponseToolCall: Codable, Sendable {
-  struct Function: Codable, Sendable {
+struct ResponseToolCall: Codable {
+  struct Function: Codable {
     let name: String
     let arguments: String
   }

@@ -1,7 +1,7 @@
 import Foundation
 
-struct NudgeEvent: Identifiable, Equatable, Sendable {
-  enum Outcome: Equatable, Sendable {
+struct NudgeEvent: Identifiable, Equatable {
+  enum Outcome: Equatable {
     case backToWork
     case allowed(Int)
     case denied

@@ -1,6 +1,6 @@
 import Foundation
 
-struct FocusReadToolbox: AssistantToolbox, Sendable {
+struct FocusReadToolbox: AssistantToolbox {
   private let focusSessionController: FocusSessionController
   private let toolLog: AssistantToolLog
 
@@ -13,18 +13,18 @@ struct FocusReadToolbox: AssistantToolbox, Sendable {
   }
 
   let systemPrompt = """
-    You are a focus coach and general assistant integrated into a macOS app called Poro.
-    The user invokes you via a hotkey, and you respond to whatever they ask.
+  You are a focus coach and general assistant integrated into a macOS app called Poro.
+  The user invokes you via a hotkey, and you respond to whatever they ask.
 
-    Below is the current [SYSTEM_CONTEXT] from the user's computer. Use this information to answer the user's question accurately.
-    Never mention the words 'context', 'tool', 'JSON', or 'system' to the user.
-    Synthesize the information into a natural, warm, and direct response. Speak like a coach.
+  Below is the current [SYSTEM_CONTEXT] from the user's computer. Use this information to answer the user's question accurately.
+  Never mention the words 'context', 'tool', 'JSON', or 'system' to the user.
+  Synthesize the information into a natural, warm, and direct response. Speak like a coach.
 
-    [SYSTEM_CONTEXT]
-    {{CONTEXT}}
+  [SYSTEM_CONTEXT]
+  {{CONTEXT}}
 
-    If the [SYSTEM_CONTEXT] reports that there is no active focus session and the user's question implies one, clarify that there is no session running right now and ask whether they want to start one.
-    """
+  If the [SYSTEM_CONTEXT] reports that there is no active focus session and the user's question implies one, clarify that there is no session running right now and ask whether they want to start one.
+  """
 
   let toolDefinitions: [AssistantToolDefinition] = [
     .init(
@@ -201,7 +201,7 @@ struct FocusReadToolbox: AssistantToolbox, Sendable {
       let log = await focusSessionController.activityLogSnapshot()
       encodedPayload = try encode(ActivityLogToolResult(log: log))
     case "get_tool_call_log":
-      encodedPayload = try encode(ToolCallLogToolResult(entries: await toolLog.snapshot()))
+      encodedPayload = try await encode(ToolCallLogToolResult(entries: toolLog.snapshot()))
     default:
       throw LLMError.toolExecutionFailure("Unknown tool: \(name)")
     }
@@ -230,7 +230,7 @@ struct FocusReadToolbox: AssistantToolbox, Sendable {
   }
 }
 
-struct FocusSessionStateToolResult: Codable, Sendable {
+struct FocusSessionStateToolResult: Codable {
   let isActive: Bool
   let isPaused: Bool
   let goal: String?
@@ -240,7 +240,7 @@ struct FocusSessionStateToolResult: Codable, Sendable {
   let overrideEndsAt: Date?
 }
 
-struct CurrentActivityToolResult: Codable, Sendable {
+struct CurrentActivityToolResult: Codable {
   let applicationName: String?
   let bundleIdentifier: String?
   let pageURL: String?
@@ -249,8 +249,8 @@ struct CurrentActivityToolResult: Codable, Sendable {
   let pageAccessError: String?
 }
 
-struct RecentDriftEventsToolResult: Codable, Sendable {
-  struct Event: Codable, Sendable {
+struct RecentDriftEventsToolResult: Codable {
+  struct Event: Codable {
     let occurredAt: Date
     let applicationName: String
     let justification: String?
@@ -260,7 +260,7 @@ struct RecentDriftEventsToolResult: Codable, Sendable {
   let events: [Event]
 }
 
-struct SessionStatsToolResult: Codable, Sendable {
+struct SessionStatsToolResult: Codable {
   let isActive: Bool
   let goal: String?
   let elapsedMinutes: Int?
@@ -272,10 +272,10 @@ struct SessionStatsToolResult: Codable, Sendable {
   let topDistractions: [String]
 }
 
-struct ActivityLogToolResult: Codable, Sendable {
+struct ActivityLogToolResult: Codable {
   let log: String
 }
 
-struct ToolCallLogToolResult: Codable, Sendable {
+struct ToolCallLogToolResult: Codable {
   let entries: [AssistantToolLogEntry]
 }

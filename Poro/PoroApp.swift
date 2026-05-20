@@ -9,10 +9,10 @@ import SwiftUI
 
 @main
 struct PoroApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    var body: some Scene {
-        Settings {
-            EmptyView()
-        }
+  @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+  var body: some Scene {
+    Settings {
+      EmptyView()
     }
+  }
 }

@@ -5,10 +5,10 @@ import Foundation
 final class FocusTimer {
   private var timer: Timer?
   private(set) var remainingSeconds: Int = 0
-  
+
   /// Callback invoked every second as the timer ticks.
   var onTick: ((Int) -> Void)?
-  
+
   /// Callback invoked when the timer reaching zero.
   var onComplete: (() -> Void)?
 
@@ -17,7 +17,7 @@ final class FocusTimer {
   func start(minutes: Int) {
     stop()
     remainingSeconds = minutes * 60
-    
+
     timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
       Task { @MainActor [weak self] in
         self?.tick()

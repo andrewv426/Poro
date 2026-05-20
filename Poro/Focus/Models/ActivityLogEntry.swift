@@ -1,6 +1,6 @@
 import Foundation
 
-struct ActivityLogEntry: Codable, Sendable {
+struct ActivityLogEntry: Codable {
   let applicationName: String
   let pageURL: URL?
   let pageTitle: String?
@@ -13,7 +13,7 @@ struct ActivityLogEntry: Codable, Sendable {
 
   func isSameActivity(as other: ActivityContext) -> Bool {
     applicationName == other.applicationName &&
-    pageURL == other.pageURL &&
-    pageTitle == other.pageTitle
+      pageURL == other.pageURL &&
+      pageTitle == other.pageTitle
   }
 }

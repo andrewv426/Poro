@@ -1,7 +1,7 @@
 import Foundation
 
 /// A client for interacting with the Cerebras LLM API, supporting streaming and eager context injection.
-struct CerebrasLLMClient: LLMClient, Sendable {
+struct CerebrasLLMClient: LLMClient {
   let configuration: LLMConfiguration
   private let session: URLSession
   private let toolbox: (any AssistantToolbox)?
@@ -101,7 +101,7 @@ struct CerebrasLLMClient: LLMClient, Sendable {
       throw LLMError.invalidResponse
     }
 
-    guard (200...299).contains(httpResponse.statusCode) else {
+    guard (200 ... 299).contains(httpResponse.statusCode) else {
       let responseBody = try await collectResponseBody(from: bytes)
       let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: responseBody)
       throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
@@ -117,7 +117,7 @@ struct CerebrasLLMClient: LLMClient, Sendable {
         continue
       case .done:
         return
-      case .delta(let deltaText):
+      case let .delta(deltaText):
         await MainActor.run {
           onDelta(deltaText)
         }
@@ -130,7 +130,7 @@ struct CerebrasLLMClient: LLMClient, Sendable {
   /// Constructs a URLRequest for the Cerebras API.
   /// - Parameter body: The encodable request body.
   /// - Returns: A configured URLRequest.
-  private func makeRequest<T: Encodable>(body: T) throws -> URLRequest {
+  private func makeRequest(body: some Encodable) throws -> URLRequest {
     let requestURL = configuration.baseURL.appendingPathComponent("chat/completions")
     var request = URLRequest(url: requestURL)
     request.httpMethod = "POST"
@@ -195,23 +195,23 @@ struct CerebrasLLMClient: LLMClient, Sendable {
 
 // MARK: - Internal API Request Models
 
-private struct RequestMessage: Encodable, Sendable {
+private struct RequestMessage: Encodable {
   let role: String
   let content: String?
   let tool_call_id: String?
   let tool_calls: [ResponseToolCall]?
 }
 
-private struct StreamChatCompletionsRequest: Encodable, Sendable {
+private struct StreamChatCompletionsRequest: Encodable {
   let model: String
   let messages: [RequestMessage]
   let stream: Bool
 }
 
-private struct ErrorResponse: Decodable, Sendable {
+private struct ErrorResponse: Decodable {
   let error: APIError
 }
 
-private struct APIError: Decodable, Sendable {
+private struct APIError: Decodable {
   let message: String?
 }

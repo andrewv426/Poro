@@ -1,11 +1,11 @@
 import Foundation
 
-struct AssistantToolDefinition: Sendable {
+struct AssistantToolDefinition {
   let name: String
   let description: String
 }
 
-struct AssistantToolLogEntry: Codable, Sendable {
+struct AssistantToolLogEntry: Codable {
   let occurredAt: Date
   let phase: String
   let toolName: String?
@@ -62,5 +62,5 @@ protocol AssistantToolbox: Sendable {
 }
 
 extension AssistantToolbox {
-  func recordToolEvent(phase: String, toolName: String?, detail: String) async {}
+  func recordToolEvent(phase _: String, toolName _: String?, detail _: String) async {}
 }

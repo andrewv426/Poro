@@ -12,16 +12,16 @@ struct AppIntentParser {
   func parseFocusStart(from text: String) -> FocusStartDraft? {
     let lowercased = text.lowercased()
     let duration = parseDuration(from: text)
-    
+
     // Check for verbs or phrases that indicate starting a focus session.
     let hasSessionVerb =
       lowercased.contains("start focus")
-      || lowercased.contains("focus session")
-      || lowercased.contains("lock in")
-      || lowercased.contains("keep me focused")
-      || lowercased.contains("stay off")
-      || (lowercased.hasPrefix("focus ") && duration != nil)
-      || lowercased.hasPrefix("focus for ")
+        || lowercased.contains("focus session")
+        || lowercased.contains("lock in")
+        || lowercased.contains("keep me focused")
+        || lowercased.contains("stay off")
+        || (lowercased.hasPrefix("focus ") && duration != nil)
+        || lowercased.hasPrefix("focus for ")
 
     guard hasSessionVerb else {
       return nil
@@ -75,7 +75,7 @@ struct AppIntentParser {
   /// - Parameter text: The user's input text.
   /// - Returns: The parsed duration in minutes, or nil if not found.
   func parseDuration(from text: String) -> Int? {
-    let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+    let nsRange = NSRange(text.startIndex ..< text.endIndex, in: text)
 
     guard
       let match = durationPattern.firstMatch(in: text, options: [], range: nsRange),
@@ -118,7 +118,7 @@ struct AppIntentParser {
     goal = durationPattern.stringByReplacingMatches(
       in: goal,
       options: [],
-      range: NSRange(goal.startIndex..<goal.endIndex, in: goal),
+      range: NSRange(goal.startIndex ..< goal.endIndex, in: goal),
       withTemplate: ""
     )
 
@@ -131,7 +131,7 @@ struct AppIntentParser {
       "keep me focused",
       "stay off",
       "for the next",
-      "for"
+      "for",
     ]
 
     let cleaned = strippedPhrases.reduce(goal) { partial, phrase in

@@ -1,6 +1,6 @@
 import Foundation
 
-struct FocusSession: Equatable, Sendable {
+struct FocusSession: Equatable {
   let id = UUID()
   let goal: String
   let durationMinutes: Int

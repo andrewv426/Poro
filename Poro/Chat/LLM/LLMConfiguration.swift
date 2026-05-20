@@ -11,7 +11,8 @@ struct LLMConfiguration {
   ) throws -> LLMConfiguration {
     guard
       let rawAPIKey = environment["CEREBRAS_API_KEY"]?.trimmingCharacters(
-        in: .whitespacesAndNewlines),
+        in: .whitespacesAndNewlines
+      ),
       !rawAPIKey.isEmpty
     else {
       throw LLMError.missingAPIKey(environmentVariable: "CEREBRAS_API_KEY")
@@ -21,7 +22,8 @@ struct LLMConfiguration {
     let resolvedModel = (model?.isEmpty == false) ? model! : "llama3.1-8b"
 
     let baseURLString = environment["CEREBRAS_BASE_URL"]?.trimmingCharacters(
-      in: .whitespacesAndNewlines)
+      in: .whitespacesAndNewlines
+    )
     let resolvedBaseURLString =
       (baseURLString?.isEmpty == false) ? baseURLString! : "https://api.cerebras.ai/v1"
 
@@ -30,7 +32,8 @@ struct LLMConfiguration {
     }
 
     let versionPatch = environment["CEREBRAS_VERSION_PATCH"]?.trimmingCharacters(
-      in: .whitespacesAndNewlines)
+      in: .whitespacesAndNewlines
+    )
 
     return LLMConfiguration(
       apiKey: rawAPIKey,

@@ -1,6 +1,6 @@
 import Foundation
 
-struct ActivityContext: Equatable, Sendable {
+struct ActivityContext: Equatable {
   let applicationName: String
   let bundleIdentifier: String?
   let processIdentifier: Int32

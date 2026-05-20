@@ -1,6 +1,6 @@
 import Foundation
 
-struct CerebrasStreamParser: Sendable {
+struct CerebrasStreamParser {
   enum Event: Equatable {
     case delta(String)
     case done

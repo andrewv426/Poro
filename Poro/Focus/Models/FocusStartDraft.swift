@@ -1,6 +1,6 @@
 import Foundation
 
-struct FocusStartDraft: Equatable, Sendable {
+struct FocusStartDraft: Equatable {
   var goal: String
   var durationMinutes: Int
 

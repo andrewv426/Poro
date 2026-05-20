@@ -1,6 +1,6 @@
 import Foundation
 
-struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassifying, Sendable {
+struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassifying {
   let configuration: LLMConfiguration
   private let session: URLSession
 
@@ -130,23 +130,23 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
     )
 
     let systemPrompt = """
-      You are a strict but fair focus coach.
-      Decide whether the user should be allowed to keep using the distracting activity they were just caught on.
-      Only allow if the justification is concrete, relevant to the stated goal, and time-bounded.
-      Deny vague avoidance, generic breaks, and low-accountability excuses.
-      Keep the message short, direct, and user-facing.
-      """
+    You are a strict but fair focus coach.
+    Decide whether the user should be allowed to keep using the distracting activity they were just caught on.
+    Only allow if the justification is concrete, relevant to the stated goal, and time-bounded.
+    Deny vague avoidance, generic breaks, and low-accountability excuses.
+    Keep the message short, direct, and user-facing.
+    """
 
     let userPrompt = """
-      Goal: \(goal)
-      Remaining minutes: \(remainingMinutes)
-      Current activity: \(activity.applicationName)
-      Justification: \(justification)
-      Nudges so far: \(nudgesToday)
-      Allowed overrides so far: \(allowedOverrides)
+    Goal: \(goal)
+    Remaining minutes: \(remainingMinutes)
+    Current activity: \(activity.applicationName)
+    Justification: \(justification)
+    Nudges so far: \(nudgesToday)
+    Allowed overrides so far: \(allowedOverrides)
 
-      Return JSON only.
-      """
+    Return JSON only.
+    """
 
     let requestBody = ChatCompletionsRequest(
       model: configuration.model,
@@ -177,7 +177,7 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
       throw LLMError.invalidResponse
     }
 
-    guard (200...299).contains(httpResponse.statusCode) else {
+    guard (200 ... 299).contains(httpResponse.statusCode) else {
       let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
       throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
     }
@@ -317,25 +317,25 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
     )
 
     let systemPrompt = """
-      You classify whether a browser tab is distracting for the user's current focus session.
-      Use the goal, URL, host, and page title. Mark distract for unrelated entertainment, social media,
-      shopping, news, idle browsing, or obvious avoidance. Mark allow for docs, research, work tools,
-      educational material, or anything plausibly necessary for the stated goal.
-      Score is the probability from 0.0 to 1.0 that this tab is distracting.
-      Be conservative near ambiguity: allow unless the tab is likely unrelated to the goal.
-      Return JSON only.
-      """
+    You classify whether a browser tab is distracting for the user's current focus session.
+    Use the goal, URL, host, and page title. Mark distract for unrelated entertainment, social media,
+    shopping, news, idle browsing, or obvious avoidance. Mark allow for docs, research, work tools,
+    educational material, or anything plausibly necessary for the stated goal.
+    Score is the probability from 0.0 to 1.0 that this tab is distracting.
+    Be conservative near ambiguity: allow unless the tab is likely unrelated to the goal.
+    Return JSON only.
+    """
 
     let userPrompt = """
-      Goal: \(goal)
-      Remaining minutes: \(remainingMinutes)
-      Application: \(activity.applicationName)
-      URL: \(activity.pageURL?.absoluteString ?? "unknown")
-      Host: \(activity.pageHost ?? "unknown")
-      Title: \(activity.pageTitle ?? "unknown")
+    Goal: \(goal)
+    Remaining minutes: \(remainingMinutes)
+    Application: \(activity.applicationName)
+    URL: \(activity.pageURL?.absoluteString ?? "unknown")
+    Host: \(activity.pageHost ?? "unknown")
+    Title: \(activity.pageTitle ?? "unknown")
 
-      Return JSON only.
-      """
+    Return JSON only.
+    """
 
     let requestBody = ChatCompletionsRequest(
       model: configuration.model,
@@ -366,7 +366,7 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
       throw LLMError.invalidResponse
     }
 
-    guard (200...299).contains(httpResponse.statusCode) else {
+    guard (200 ... 299).contains(httpResponse.statusCode) else {
       let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
       throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
     }
