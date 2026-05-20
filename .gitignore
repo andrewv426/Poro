@@ -1,7 +1,5 @@
-# Xcode schemes (may contain env variables / secrets)
-Poro.xcodeproj/xcshareddata/xcschemes/
-
-# Xcode user data
+# Xcode user data (per-developer state, NOT to be shared)
+# Env-var values typed into the scheme UI live here — never in xcshareddata.
 Poro.xcodeproj/xcuserdata/
 *.xcuserstate
 

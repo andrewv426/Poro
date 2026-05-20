@@ -7,7 +7,7 @@ struct LLMConfiguration {
   let versionPatch: String?
 
   static func loadFromEnvironment(
-    environment: [String: String] = ProcessInfo.processInfo.environment
+    environment: [String: String] = mergedEnvironment()
   ) throws -> LLMConfiguration {
     guard
       let rawAPIKey = environment["CEREBRAS_API_KEY"]?.trimmingCharacters(
@@ -41,5 +41,15 @@ struct LLMConfiguration {
       baseURL: baseURL,
       versionPatch: versionPatch?.isEmpty == false ? versionPatch : nil
     )
+  }
+
+  /// Overlays values from `~/.config/poro/env` underneath the process environment so Xcode scheme
+  /// env vars still win when set, but worktrees without scheme vars fall back to the user-global file.
+  private static func mergedEnvironment() -> [String: String] {
+    var merged = EnvFileLoader.load()
+    for (key, value) in ProcessInfo.processInfo.environment {
+      merged[key] = value
+    }
+    return merged
   }
 }

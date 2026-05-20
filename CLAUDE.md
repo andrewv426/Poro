@@ -28,7 +28,12 @@ Distraction detection runs while a focus session is active. It uses static rules
 - **Browser integration:** AppleScript for tab URL/title lookup and tab close
 - **Build:** Xcode 26.1+ (`Poro.xcodeproj`), single target `Poro`
 
-### Environment variables (set in Xcode scheme — Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables)
+### Environment variables
+
+Two sources, layered (process env wins on conflict):
+
+1. **`~/.config/poro/env`** — user-global dotenv file (`KEY=VALUE` per line, `#` comments). Set once, every worktree picks it up. Recommended.
+2. **Xcode scheme env vars** — Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables. Per-user values live in `xcuserdata/` (gitignored). Convenient for one-off overrides.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
@@ -37,7 +42,9 @@ Distraction detection runs while a focus session is active. It uses static rules
 | `CEREBRAS_BASE_URL` | no | `https://api.cerebras.ai/v1` | API base URL |
 | `CEREBRAS_VERSION_PATCH` | no | — | Optional header |
 
-Loaded by `LLMConfiguration.loadFromEnvironment()`.
+The shared `Poro.xcscheme` ships with **empty values** for `CEREBRAS_API_KEY` and `CEREBRAS_MODEL` as discoverability placeholders — never commit real values to `xcshareddata/`. Fill them in Xcode locally (auto-saved to gitignored `xcuserdata/`) or use `~/.config/poro/env`.
+
+Loaded by `LLMConfiguration.loadFromEnvironment()` (overlay implemented in `EnvFileLoader`).
 
 ### Build note — Xcode 26.1.1 workarounds
 
