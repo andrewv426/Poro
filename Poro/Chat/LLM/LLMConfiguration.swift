@@ -7,7 +7,7 @@ struct LLMConfiguration {
   let versionPatch: String?
 
   static func loadFromEnvironment(
-    environment: [String: String] = mergedEnvironment()
+    environment: [String: String] = EnvFileLoader.mergedEnvironment()
   ) throws -> LLMConfiguration {
     guard
       let rawAPIKey = environment["CEREBRAS_API_KEY"]?.trimmingCharacters(
@@ -18,41 +18,26 @@ struct LLMConfiguration {
       throw LLMError.missingAPIKey(environmentVariable: "CEREBRAS_API_KEY")
     }
 
-    let model = environment["CEREBRAS_MODEL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let resolvedModel = (model?.isEmpty == false) ? model! : "llama3.1-8b"
-
-    let baseURLString = environment["CEREBRAS_BASE_URL"]?.trimmingCharacters(
-      in: .whitespacesAndNewlines
-    )
-    let resolvedBaseURLString =
-      (baseURLString?.isEmpty == false) ? baseURLString! : "https://api.cerebras.ai/v1"
+    let resolvedModel = nonEmpty(environment["CEREBRAS_MODEL"]) ?? "llama3.1-8b"
+    let resolvedBaseURLString = nonEmpty(environment["CEREBRAS_BASE_URL"]) ?? "https://api.cerebras.ai/v1"
 
     guard let baseURL = URL(string: resolvedBaseURLString) else {
       throw LLMError.invalidBaseURL(resolvedBaseURLString)
     }
 
-    let versionPatch = environment["CEREBRAS_VERSION_PATCH"]?.trimmingCharacters(
-      in: .whitespacesAndNewlines
-    )
-
     return LLMConfiguration(
       apiKey: rawAPIKey,
       model: resolvedModel,
       baseURL: baseURL,
-      versionPatch: versionPatch?.isEmpty == false ? versionPatch : nil
+      versionPatch: nonEmpty(environment["CEREBRAS_VERSION_PATCH"])
     )
   }
 
-  /// Overlays values from `~/.config/poro/env` underneath the process environment so Xcode scheme
-  /// env vars still win when set, but worktrees without scheme vars fall back to the user-global file.
-  ///
-  /// Empty process-env values do NOT override the file — Xcode schemes ship with placeholder
-  /// entries like `CEREBRAS_API_KEY=""` for discoverability, and we want the file to win in that case.
-  private static func mergedEnvironment() -> [String: String] {
-    var merged = EnvFileLoader.load()
-    for (key, value) in ProcessInfo.processInfo.environment where !value.isEmpty {
-      merged[key] = value
+  /// Trims `value` and returns nil if the result is empty. Lets `??` provide defaults cleanly.
+  private static func nonEmpty(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+      return nil
     }
-    return merged
+    return trimmed
   }
 }

@@ -11,6 +11,8 @@ Poro is a macOS floating assistant app written in Swift, SwiftUI, and AppKit. It
 - **Normal chat** — 560 px centered panel, general assistant. Toggle with `Cmd+Option+T`.
 - **Focus mode** — 420 px left-edge panel used during focus sessions. Tucks into a draggable Poro icon tab on the left screen edge; expands when a distraction is detected.
 
+Slash commands route deterministically (no LLM round-trip). Currently only `/play <song>` — types into the normal-chat composer and swaps the raw text for a styled `[/play]` chip + query field. Submitting plays the top Spotify search result. When `SPOTIFY_CLIENT_ID` is configured, the **Spotify Web API** (Spotify Connect) is used so the desktop client doesn't steal focus; otherwise (or when no active device is available) Poro falls back to AppleScript and snaps focus back via `onReactivateRequested`. Spotify is launched if not running on the AppleScript path. `<song> by <artist>` parses into a track+artist query for tighter relevance. `SlashCommandParser` runs before any natural-language matchers in `AppIntentRouter`, so new slash verbs are easy to add. See `Poro/Spotify/` and `Poro/App/Intent/SlashCommandParser.swift`.
+
 The LLM backend is **Cerebras streaming chat completions**. Configuration is loaded from environment variables at launch — see the env-var list below. Do not put API keys in source.
 
 Distraction detection runs while a focus session is active. It uses static rules first, then a Cerebras-backed classifier for ambiguous browser tabs. When a distraction is confirmed, the user gets a 10-second close-tab-or-explain prompt. Tab closing is conservative: Poro only closes a tab when its current URL still exactly matches the originally flagged URL.
@@ -43,8 +45,9 @@ For a new worktree, run: `ln -s ~/.config/poro/env Poro/Poro.env` (or `cp`). `~/
 | `CEREBRAS_MODEL` | no | `llama3.1-8b` | Model id |
 | `CEREBRAS_BASE_URL` | no | `https://api.cerebras.ai/v1` | API base URL |
 | `CEREBRAS_VERSION_PATCH` | no | — | Optional header |
+| `SPOTIFY_CLIENT_ID` | no | — | Enables the Spotify Web API path for `/play` (Spotify Connect, no focus flicker). Register an app at https://developer.spotify.com/dashboard with redirect URI `poro://spotify-callback`. Without this, `/play` uses the AppleScript fallback (Spotify briefly steals focus). |
 
-The shared `Poro.xcscheme` ships with **empty values** for `CEREBRAS_API_KEY` and `CEREBRAS_MODEL` as discoverability placeholders — never commit real values to `xcshareddata/`. Fill them in Xcode locally (auto-saved to gitignored `xcuserdata/`) or use `~/.config/poro/env`.
+The shared `Poro.xcscheme` ships with **empty values** for `CEREBRAS_API_KEY` and `CEREBRAS_MODEL` as discoverability placeholders — never commit real values to `xcshareddata/`. Fill them in Xcode locally (auto-saved to gitignored `xcuserdata/`) or use the bundled `Poro/Poro.env` path above. Note: empty scheme values won't override the bundled file — `mergedEnvironment()` ignores empty strings.
 
 Loaded by `LLMConfiguration.loadFromEnvironment()` (overlay implemented in `EnvFileLoader`).
 
@@ -57,6 +60,12 @@ Two pbxproj-level changes work around Xcode 26.1.1 IDE-only linker bugs. Neither
 2. **`LD_RUNPATH_SEARCH_PATHS = "$(inherited)"`** — the boilerplate `@executable_path/../Frameworks` entry has been removed. Xcode 26.1.1's IDE-side linker validates that rpath directories exist at link time; since Poro uses only static SPM dependencies (no dynamic frameworks copied to `Poro.app/Contents/Frameworks/`), the directory doesn't exist and the linker aborts with `cannot get absolute path for: executable_path/../Frameworks`. CLI `ld` doesn't run this validation. `$(inherited)` retains the auto-added PackageFrameworks rpath.
 
 When Apple ships fixes for these bugs in a future Xcode release, both changes can be reverted to restore IDE fast-debug-link and the boilerplate Frameworks rpath.
+
+### Build note — sandbox blocks `~` reads at runtime
+
+`com.apple.security.app-sandbox = true` is on. At runtime, `FileManager.homeDirectoryForCurrentUser` resolves to `~/Library/Containers/<bundle-id>/Data/` — not `~`. Any path under the real `~` (including `~/.config/poro/env`) is unreadable and `String(contentsOf:)` silently fails. **The app can only read files it ships in `Bundle.main`.**
+
+That's why `EnvFileLoader` reads `Poro.env` from the bundle first, and why `Poro/Poro.env` is symlinked into the source tree from `~/.config/poro/env`. Xcode's `PBXFileSystemSynchronizedRootGroup` auto-detects the file by extension and copies it to `Poro.app/Contents/Resources/Poro.env` at build time. The same gotcha applies to anything else you might want to read from disk — bundle it, or write to the app's sandboxed container.
 
 ### Repo layout
 
@@ -101,6 +110,7 @@ When Apple ships fixes for these bugs in a future Xcode release, both changes ca
 | `focusSessionController.onSummaryAvailable` | `PoroController` |
 | `poroController.onDismissRequested` | `AssistantWindowController` |
 | `poroController.onPresentRequested` | `AssistantWindowController` |
+| `poroController.onReactivateRequested` | `AssistantWindowController` |
 
 ---
 
@@ -133,5 +143,7 @@ The Claude Code `Stop` hook is configured to run `./hooks/run-checks.sh` automat
 - If a focus close/explain flow succeeds, tuck the panel back to the icon. If it fails, keep it expanded.
 - Don't overwrite unrelated dirty changes — this repo often has active in-progress edits.
 - `SourceKit "Cannot find type"` errors in editor diagnostics are usually false positives without a full Xcode build index. Verify against typecheck output.
+- **Avoid ternary operators (`?:`) in non-trivial spots.** Prefer Swift 5.9 `if`/`switch` expressions for assignments and `??` for nil-coalescing. Single-token SwiftUI modifiers (`.scaleEffect(isPressed ? 0.96 : 1)`) are fine — the goal is readability, not absolute elimination. Lint already enforces `if`-expression over ternary for assignments via swiftformat's `conditionalAssignment` rule.
+- **Never add `Co-Authored-By: Claude` (or any Claude attribution) to commit messages.** Commits in this repo are solo-authored. Applies to both new commits and `git commit --amend` rewrites.
 
 For full focus session lifecycle, prompt inventory, and `PoroTheme` dimension constants → see `RepoContext.md`.

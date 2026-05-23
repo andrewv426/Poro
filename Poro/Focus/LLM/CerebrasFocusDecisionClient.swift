@@ -191,7 +191,7 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
     }
 
     let payload = try JSONDecoder().decode(DecisionPayload.self, from: content)
-    let verdict = payload.verdict.lowercased() == "allow" ? FocusDecision.Verdict.allow : .deny
+    let verdict: FocusDecision.Verdict = if payload.verdict.lowercased() == "allow" { .allow } else { .deny }
 
     if verdict == .allow {
       let grantedMinutes = max(1, min(payload.allowMinutes ?? 5, 15))
@@ -381,7 +381,7 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
 
     let payload = try JSONDecoder().decode(ClassificationPayload.self, from: content)
     let verdict: DistractionClassification.Verdict =
-      payload.verdict.lowercased() == "distract" ? .distract : .allow
+      if payload.verdict.lowercased() == "distract" { .distract } else { .allow }
     let score = min(1, max(0, payload.score))
 
     return DistractionClassification(

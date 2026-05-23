@@ -22,6 +22,11 @@ struct AppIntentRouter {
       return IntentPreview(intent: nil, hint: nil)
     }
 
+    // Highest priority: explicit slash commands (unambiguous; bypass natural-language matchers).
+    if let slashIntent = SlashCommandParser.parse(trimmed) {
+      return IntentPreview(intent: slashIntent, hint: slashCommandHint(for: slashIntent))
+    }
+
     // High priority: Session control commands take precedence during an active session.
     if hasActiveSession, let command = parser.parseSessionCommand(from: trimmed) {
       return IntentPreview(
@@ -50,6 +55,13 @@ struct AppIntentRouter {
   func resolveSubmission(for text: String, hasActiveSession: Bool) -> AppIntent {
     let preview = preview(for: text, hasActiveSession: hasActiveSession)
     return preview.intent ?? .chat(text.trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
+  private func slashCommandHint(for intent: AppIntent) -> ComposerHint? {
+    if case let .spotify(.play(query)) = intent {
+      return ComposerHint(title: query == nil ? "↵ Resume Spotify" : "↵ Play on Spotify")
+    }
+    return nil
   }
 
   /// Generates a localized hint string for session commands.

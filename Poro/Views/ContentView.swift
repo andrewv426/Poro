@@ -4,6 +4,7 @@ struct ContentView: View {
   @Bindable var poroController: PoroController
   let context: AssistantPanelContext
   @FocusState private var isInputFocused: Bool
+  @State private var slashSelectedIndex: Int = 0
 
   private let onDismissRequest: () -> Void
   private let onPanelHeightChange: (CGFloat) -> Void
@@ -191,7 +192,25 @@ struct ContentView: View {
         isFocused: $isInputFocused,
         isStreaming: poroController.chatController(for: context).isSending,
         onSubmit: { poroController.submitComposer(in: context) },
-        onStop: poroController.chatController(for: context).stopStreaming
+        onStop: poroController.chatController(for: context).stopStreaming,
+        composerMode: context == .normal ? composerModeBinding : nil,
+        onExitSpotifyMode: context == .normal
+          ? { poroController.exitSpotifyMode() }
+          : nil,
+        slashMatches: context == .normal ? currentSlashMatches : nil,
+        slashSelectedIndex: context == .normal ? $slashSelectedIndex : nil,
+        onSlashSelect: context == .normal
+          ? { descriptor in
+            poroController.selectSlashCommand(descriptor)
+            slashSelectedIndex = 0
+          }
+          : nil,
+        onSlashDismiss: context == .normal
+          ? {
+            poroController.dismissSlashMenu()
+            slashSelectedIndex = 0
+          }
+          : nil
       )
     }
   }
@@ -259,6 +278,26 @@ struct ContentView: View {
       },
       set: { draft in
         poroController.updateComposerDraft(draft, in: context)
+      }
+    )
+  }
+
+  private var currentSlashMatches: [SlashCommandDescriptor]? {
+    if case let .slashMenu(_, matches) = poroController.composerMode {
+      return matches
+    }
+    return nil
+  }
+
+  private var composerModeBinding: Binding<ComposerMode> {
+    Binding(
+      get: { poroController.composerMode },
+      set: { newMode in
+        if case let .spotifyPlay(query) = newMode {
+          poroController.setSpotifyQuery(query)
+        } else {
+          poroController.exitSpotifyMode()
+        }
       }
     )
   }
@@ -492,10 +531,13 @@ private struct FocusTabView: View {
           .shadow(color: .black.opacity(0.45), radius: 12, y: 4)
 
         if isSessionActive {
+          let pulseOpacity = if pulse { 0.55 } else { 0.15 }
+          let pulseWidth: CGFloat = if pulse { 1.5 } else { 3 }
+          let pulseScale: CGFloat = if pulse { 1.35 } else { 1.0 }
           Circle()
-            .stroke(PoroTheme.accent.opacity(pulse ? 0.55 : 0.15), lineWidth: pulse ? 1.5 : 3)
+            .stroke(PoroTheme.accent.opacity(pulseOpacity), lineWidth: pulseWidth)
             .frame(width: 28, height: 28)
-            .scaleEffect(pulse ? 1.35 : 1.0)
+            .scaleEffect(pulseScale)
             .animation(
               Animation.easeInOut(duration: 1.6).repeatForever(autoreverses: true),
               value: pulse
