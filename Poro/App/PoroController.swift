@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -14,6 +15,7 @@ final class PoroController {
   var focusComposerDraft = ""
   var composerHint: ComposerHint?
   var focusComposerHint: ComposerHint?
+  var composerMode: ComposerMode = .normal
   var focusSetupDraft: FocusStartDraft = .default
   var isFocusPanelTucked: Bool = false
 
@@ -23,8 +25,10 @@ final class PoroController {
 
   var onDismissRequested: (() -> Void)?
   var onPresentRequested: (() -> Void)?
+  var onReactivateRequested: (() -> Void)?
 
   private let intentRouter: AppIntentRouter
+  private let spotifyController = SpotifyController()
   private let customDurationKey = "focus.customDurationMinutes"
   static let durationPresets = [25, 45, 60]
 
@@ -127,6 +131,34 @@ final class PoroController {
   func updateComposerDraft(_ text: String, in context: AssistantPanelContext) {
     switch context {
     case .normal:
+      // Fast-path the full-verb trigger so power users typing "/play " in one go skip the menu.
+      if text == "/play ", isComposerEligibleForChipTrigger {
+        composerMode = .spotifyPlay(query: "")
+        composerDraft = ""
+        setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: context)
+        return
+      }
+
+      // Slash-menu mode: text begins with "/" and the user is still typing the verb (no space yet).
+      if text.hasPrefix("/") {
+        let prefix = String(text.dropFirst())
+        if !prefix.contains(" ") {
+          let matches = SlashCommandRegistry.matches(prefix: prefix)
+          if !matches.isEmpty {
+            composerMode = .slashMenu(prefix: prefix, matches: matches)
+            composerDraft = text
+            setComposerHint(nil, in: context)
+            return
+          }
+          // No matches but still slash-prefix: fall through to plain text editing, drop the menu.
+        }
+      }
+
+      // User backed out of the slash menu (e.g. deleted the slash, or typed past the verb).
+      if case .slashMenu = composerMode {
+        composerMode = .normal
+      }
+
       if composerDraft != text {
         composerDraft = text
       }
@@ -139,8 +171,68 @@ final class PoroController {
     refreshComposerHint(in: context)
   }
 
+  /// True when the composer is in a state that can transition straight into chip mode via the
+  /// full-verb fast path. Either the user typed "/play " from scratch or they were in the menu.
+  private var isComposerEligibleForChipTrigger: Bool {
+    switch composerMode {
+    case .normal, .slashMenu:
+      true
+    case .spotifyPlay:
+      false
+    }
+  }
+
+  /// Invoked from the slash-menu UI when the user selects a command (Enter or click).
+  func selectSlashCommand(_ descriptor: SlashCommandDescriptor) {
+    switch descriptor.id {
+    case "play":
+      composerMode = .spotifyPlay(query: "")
+      composerDraft = ""
+      setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: .normal)
+    default:
+      composerMode = .normal
+      composerDraft = ""
+    }
+  }
+
+  /// Esc inside the slash menu — close the menu and clear the slash text so the composer is fresh.
+  func dismissSlashMenu() {
+    guard case .slashMenu = composerMode else { return }
+    composerMode = .normal
+    composerDraft = ""
+    refreshComposerHint(in: .normal)
+  }
+
+  /// Updates the query portion of the Spotify chip. Refreshes the composer hint to reflect
+  /// resume vs play.
+  func setSpotifyQuery(_ query: String) {
+    guard case .spotifyPlay = composerMode else { return }
+    composerMode = .spotifyPlay(query: query)
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    composerHint = ComposerHint(title: trimmed.isEmpty ? "↵ Resume Spotify" : "↵ Play on Spotify")
+  }
+
+  /// Exits Spotify chip mode and clears the composer entirely. Backspacing out of an empty chip
+  /// should leave the user with a fresh raw composer, not "/play " residue.
+  func exitSpotifyMode() {
+    composerMode = .normal
+    composerDraft = ""
+    refreshComposerHint(in: .normal)
+  }
+
   func submitComposer(in context: AssistantPanelContext) {
-    let trimmed = composerDraft(for: context).trimmingCharacters(in: .whitespacesAndNewlines)
+    // If the normal-chat composer is in Spotify chip mode, synthesize the canonical "/play [query]"
+    // string and reset the mode before falling into the existing router path.
+    let submission: String
+    if context == .normal, case let .spotifyPlay(query) = composerMode {
+      let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      submission = trimmedQuery.isEmpty ? "/play" : "/play \(trimmedQuery)"
+      composerMode = .normal
+    } else {
+      submission = composerDraft(for: context)
+    }
+
+    let trimmed = submission.trimmingCharacters(in: .whitespacesAndNewlines)
 
     guard !trimmed.isEmpty else {
       return
@@ -169,6 +261,20 @@ final class PoroController {
       setComposerDraft("", in: context)
       setComposerHint(nil, in: context)
       handleSessionCommand(command, originalText: trimmed, in: context)
+    case let .spotify(command):
+      // Slash commands are normal-chat only. In focus chat we fall through to a regular LLM message
+      // so users typing "/play foo" mid-session don't get surprising behavior.
+      guard context == .normal else {
+        setRoute(.chat, in: context)
+        setComposerDraft("", in: context)
+        setComposerHint(nil, in: context)
+        chatController(for: context).send(trimmed)
+        return
+      }
+      setRoute(.chat, in: context)
+      setComposerDraft("", in: context)
+      setComposerHint(nil, in: context)
+      handleSpotifyCommand(command, originalText: trimmed)
     }
   }
 
@@ -208,6 +314,44 @@ final class PoroController {
     focusPanelRoute = .chat
     let prompt = "The user is working on '\(session.goal)' and opened \(activity.distractionLabel). A focus guard is asking the user to either close the tab or explain why it needs to stay open. Address the user directly as 'you'. Do not speak as the user or use first-person wording like 'I', 'me', or 'my'. Gently redirect them back without being preachy — one or two sentences max."
     focusChatController.injectAssistantPrompt(prompt)
+  }
+
+  private func handleSpotifyCommand(_ command: SpotifyCommand, originalText: String) {
+    // Hint to the system that Spotify is about to activate (intentional) so the snap-back behaves
+    // cooperatively on macOS 14+. No-op on the Web API path because Spotify never activates there.
+    if #available(macOS 14.0, *), case .play(query: .some) = command {
+      NSApp.yieldActivation(toApplicationWithBundleIdentifier: "com.spotify.client")
+    }
+    spotifyController.execute(command) { [weak self] outcome in
+      self?.appendSpotifyExchange(originalText: originalText, outcome: outcome)
+    }
+  }
+
+  private func appendSpotifyExchange(originalText: String, outcome: SpotifyOutcome) {
+    if outcome.requiresReactivation {
+      onReactivateRequested?()
+    }
+
+    let assistantText = switch outcome.result {
+    case let .played(query):
+      "Now playing on Spotify: \(query)"
+    case .resumed:
+      "Resumed Spotify playback."
+    case let .launchFailed(reason):
+      "Couldn't open Spotify: \(reason)"
+    case .notAuthorized:
+      "Spotify automation isn't allowed. Enable Poro under System Settings → Privacy & Security → Automation."
+    case let .scriptError(message):
+      "Spotify didn't respond: \(message)"
+    case .authNeeded:
+      "Connect Poro to Spotify to use /play (see ~/.config/poro/env for SPOTIFY_CLIENT_ID)."
+    case .premiumRequired:
+      "Spotify Web API requires Premium."
+    case let .networkError(reason):
+      "Couldn't reach Spotify: \(reason)"
+    }
+
+    chatController.appendLocalExchange(userText: originalText, assistantText: assistantText)
   }
 
   private func handleSessionCommand(

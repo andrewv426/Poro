@@ -299,8 +299,12 @@ struct BrowserTabContextProvider {
       return nil
     }
 
-    let title = result?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-    return (title?.isEmpty == false) ? title : nil
+    guard let trimmed = result?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !trimmed.isEmpty
+    else {
+      return nil
+    }
+    return trimmed
   }
 
   private static func closeActiveTabIfMatching(

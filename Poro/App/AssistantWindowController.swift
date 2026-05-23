@@ -96,6 +96,11 @@ final class AssistantWindowController {
     poroController.onPresentRequested = { [weak self] in
       self?.showFocusPanel(animated: true)
     }
+    poroController.onReactivateRequested = { [weak self] in
+      guard let self else { return }
+      normalPanel.makeKeyAndOrderFront(nil)
+      NSApp.activate(ignoringOtherApps: true)
+    }
     poroController.focusSessionController.onSessionStateChange = { [weak self] in
       self?.handleSessionStateChange()
     }

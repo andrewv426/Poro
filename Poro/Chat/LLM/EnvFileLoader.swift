@@ -57,6 +57,18 @@ enum EnvFileLoader {
     return result
   }
 
+  /// Overlays values from the bundled env file underneath the process environment so Xcode scheme
+  /// env vars still win when set, but worktrees without scheme vars fall back to the user-global
+  /// file. Empty process-env values do NOT override the file — Xcode schemes ship with placeholder
+  /// entries like `KEY=""` for discoverability, and we want the file to win in that case.
+  static func mergedEnvironment() -> [String: String] {
+    var merged = load()
+    for (key, value) in ProcessInfo.processInfo.environment where !value.isEmpty {
+      merged[key] = value
+    }
+    return merged
+  }
+
   private static func stripSurroundingQuotes(_ value: String) -> String {
     guard value.count >= 2 else { return value }
     let first = value.first

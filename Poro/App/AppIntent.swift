@@ -22,6 +22,7 @@ enum AppIntent: Equatable {
   case chat(String)
   case startFocus(FocusStartDraft)
   case sessionCommand(SessionCommand)
+  case spotify(SpotifyCommand)
 }
 
 struct ComposerHint: Equatable {
