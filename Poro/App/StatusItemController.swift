@@ -20,6 +20,9 @@ final class StatusItemController {
     focusSessionController.onStatusItemUpdate = { [weak self] in
       self?.update()
     }
+    AppearanceController.shared.onPresetChange = { [weak self] in
+      self?.update()
+    }
     update()
   }
 
@@ -29,11 +32,10 @@ final class StatusItemController {
     guard let button = statusItem.button else { return }
 
     let text = focusSessionController.statusItemText ?? ""
-    let mint = NSColor(srgbRed: 168 / 255, green: 230 / 255, blue: 201 / 255, alpha: 1)
     button.attributedTitle = NSAttributedString(
       string: text,
       attributes: [
-        .foregroundColor: mint,
+        .foregroundColor: AppearanceController.shared.preset.nsAccent,
         .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
       ]
     )

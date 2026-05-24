@@ -13,12 +13,19 @@ enum PoroTheme {
   static let focusSetupHeight: CGFloat = 252
   static let summaryHeight: CGFloat = 330
   static let expandedSurfaceHeight: CGFloat = 480
+  static let settingsHeight: CGFloat = 460
   static let topAnchorRatio: CGFloat = 0.30
   static let windowCornerRadius: CGFloat = 14
   static let messageSpacing: CGFloat = 24
 
-  static let accent = Color(red: 168 / 255, green: 230 / 255, blue: 201 / 255)
-  static let onAccent = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255)
+  @MainActor static var accent: Color {
+    AppearanceController.shared.preset.accent
+  }
+
+  @MainActor static var onAccent: Color {
+    AppearanceController.shared.preset.onAccent
+  }
+
   static let stopColor = Color(red: 251 / 255, green: 113 / 255, blue: 133 / 255)
   static let bodyText = Color(red: 237 / 255, green: 237 / 255, blue: 237 / 255)
   static let assistantBodyText = Color(red: 237 / 255, green: 237 / 255, blue: 237 / 255).opacity(0.85)
