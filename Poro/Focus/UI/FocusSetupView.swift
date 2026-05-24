@@ -100,6 +100,7 @@ struct FocusSetupView: View {
       .buttonStyle(.plain)
     }
     .padding(20)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear {
       let current = poroController.focusSetupDraft.durationMinutes
       if !durationOptions.contains(current) {

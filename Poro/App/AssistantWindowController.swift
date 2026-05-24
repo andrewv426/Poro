@@ -422,17 +422,14 @@ final class AssistantWindowController {
     }
 
     let focus = context == .focus
-    let chatHeight: CGFloat = {
+    switch poroController.route(for: context) {
+    case .chat:
       if poroController.isChatExpanded(in: context) {
         return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
       }
       return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
-    }()
-    switch poroController.route(for: context) {
-    case .chat:
-      return chatHeight
     case .focusSetup:
-      return max(chatHeight, PoroTheme.focusSetupHeight)
+      return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
     }

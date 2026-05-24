@@ -32,10 +32,12 @@ struct ContentView: View {
     let focus = context == .focus
     switch poroController.route(for: context) {
     case .chat:
-      return chatTotalHeight(focus: focus)
+      if poroController.isChatExpanded(in: context) {
+        return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
+      }
+      return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
     case .focusSetup:
-      // Overlay needs room to render the setup card; never shrink below the chat behind it.
-      return max(chatTotalHeight(focus: focus), PoroTheme.focusSetupHeight)
+      return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
     }
@@ -45,26 +47,15 @@ struct ContentView: View {
     let focus = context == .focus
     switch poroController.route(for: context) {
     case .chat:
-      return chatSurfaceHeight(focus: focus)
+      if poroController.isChatExpanded(in: context) {
+        return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
+      }
+      return focus ? PoroTheme.focusCollapsedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
     case .focusSetup:
-      return max(chatSurfaceHeight(focus: focus), PoroTheme.focusSetupHeight)
+      return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
     }
-  }
-
-  private func chatTotalHeight(focus: Bool) -> CGFloat {
-    if poroController.isChatExpanded(in: context) {
-      return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
-    }
-    return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
-  }
-
-  private func chatSurfaceHeight(focus: Bool) -> CGFloat {
-    if poroController.isChatExpanded(in: context) {
-      return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
-    }
-    return focus ? PoroTheme.focusCollapsedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
   }
 
   var body: some View {
@@ -117,8 +108,10 @@ struct ContentView: View {
       PoroTheme.windowTint
 
       switch poroController.route(for: context) {
-      case .chat, .focusSetup:
+      case .chat:
         chatSurface
+      case .focusSetup:
+        FocusSetupView(poroController: poroController)
       case .summary:
         if let summary = poroController.focusSessionController.latestSummary {
           SessionSummaryView(summary: summary) {
@@ -126,11 +119,6 @@ struct ContentView: View {
             onDismissRequest()
           }
         }
-      }
-
-      if poroController.route(for: context) == .focusSetup {
-        FocusSetupOverlay(poroController: poroController)
-          .transition(.opacity)
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: PoroTheme.windowCornerRadius, style: .continuous))
@@ -333,35 +321,6 @@ struct ContentView: View {
         poroController.focusSessionController.updatePendingDistractionJustification(draft)
       }
     )
-  }
-}
-
-private struct FocusSetupOverlay: View {
-  @Bindable var poroController: PoroController
-
-  var body: some View {
-    ZStack {
-      Color.black.opacity(0.45)
-        .ignoresSafeArea()
-        .contentShape(Rectangle())
-        .onTapGesture {
-          poroController.cancelFocusSetup()
-        }
-
-      FocusSetupView(poroController: poroController)
-        .frame(width: 440)
-        .background(
-          RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(PoroTheme.hoverBackground)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .stroke(PoroTheme.innerBorder, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-    }
   }
 }
 
