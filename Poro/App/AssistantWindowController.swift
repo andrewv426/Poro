@@ -34,6 +34,14 @@ final class AssistantWindowController {
   private let focusPanel: FloatingAssistantPanel
   private let poroController: PoroController
   private var normalTotalHeight: CGFloat
+  /// Last-reported overlay contribution (slash menu / Spotify picker), used by
+  /// `setNormalPanelHeight` to distinguish baseline transitions from overlay-driven growth.
+  /// Baseline = normalTotalHeight - normalOverlayHeight.
+  private var normalOverlayHeight: CGFloat = 0
+  /// How much of the baseline sits below the input row — namely the composer-hint footer strip
+  /// block (~32px) when shown. Used by `normalFrame` to drop the panel bottom downward when
+  /// the footer appears so the input row's top edge stays put on screen.
+  private var normalBelowInputRow: CGFloat = 0
   private var focusTotalHeight: CGFloat
   private var panelPlacement: PanelPlacement
   private var focusTabTopRatio: CGFloat
@@ -64,7 +72,15 @@ final class AssistantWindowController {
     }
     normalPanel.onDragEnded = { [weak self] topLeft in
       guard let self else { return }
-      panelPlacement = .manual(topLeft: topLeft)
+      // AppKit reports the drop top-left at the current (possibly grown) panel height.
+      // Convert to the input-row-anchored form `normalFrame()` expects: storedTopLeft.y is
+      // the input row's TOP edge in screen y. Panel top = inputRowTopY + overlayContribution,
+      // so inputRowTopY = panel.top - overlay.
+      let inputRowTopLeft = CGPoint(
+        x: topLeft.x,
+        y: topLeft.y - normalOverlayHeight
+      )
+      panelPlacement = .manual(topLeft: inputRowTopLeft)
       persistPanelPlacement()
     }
 
@@ -75,8 +91,13 @@ final class AssistantWindowController {
         onDismissRequest: { [weak self] in
           self?.hideNormal(animated: true)
         },
-        onPanelHeightChange: { [weak self] totalHeight in
-          self?.setNormalPanelHeight(totalHeight, animated: true)
+        onPanelHeightChange: { [weak self] baseline, overlay, belowInputRow in
+          self?.setNormalPanelHeight(
+            baseline: baseline,
+            overlay: overlay,
+            belowInputRow: belowInputRow,
+            animated: true
+          )
         }
       )
     )
@@ -88,8 +109,10 @@ final class AssistantWindowController {
         onDismissRequest: { [weak self] in
           self?.tuckFocus(animated: true)
         },
-        onPanelHeightChange: { [weak self] totalHeight in
-          self?.setFocusPanelHeight(totalHeight, animated: true)
+        onPanelHeightChange: { [weak self] baseline, overlay, _ in
+          // Focus panel doesn't use the bottom-anchor input-row model — keep its existing
+          // total-height-driven flow.
+          self?.setFocusPanelHeight(baseline + overlay, animated: true)
         },
         onFocusTabDragChanged: { [weak self] in
           self?.dragFocusTab()
@@ -235,6 +258,8 @@ final class AssistantWindowController {
   private func hideNormal(animated: Bool) {
     guard normalPanel.isVisible else { return }
 
+    poroController.panelWasHidden(.normal)
+
     let finalFrame = normalPanel.frame.offsetBy(dx: 0, dy: 8)
     let finish = {
       self.normalPanel.orderOut(nil)
@@ -359,9 +384,32 @@ final class AssistantWindowController {
       clampedTopLeft(storedTopLeft, in: screenFrame)
     }
 
+    // The input row is the anchor. `topLeft.y` is interpreted as the screen y of the input
+    // row's TOP edge — that's the stable reference point across every transition:
+    //
+    //   - Slash menu / Spotify picker (overlay) grows the panel UPWARD: panel top moves up
+    //     by `overlayContribution`, input row stays put.
+    //   - Composer hint footer ("↵ Resume Spotify") grows the panel DOWNWARD: panel bottom
+    //     drops by ~32px, input row stays put.
+    //   - Chat expand: panel top grows up by ~424px, input row stays put.
+    //
+    // Drag/nudge converts AppKit's reported top-left back to this input-row-anchored form
+    // (see `onDragEnded` and `nudgeNormalPanel`).
+    // Anchor: panel.bottom = inputRowBottomY - belowInputRow
+    //   where inputRowBottomY = topLeft.y - collapsedSurfaceHeight (input row's natural bottom)
+    //   and belowInputRow = how much of the baseline sits below the input row (the footer
+    //   strip's 32px block when a composer hint is shown; otherwise 0).
+    //
+    // Layout invariant: the input row's TOP edge stays at `topLeft.y` regardless of:
+    //   - overlay open/close (slash menu, Spotify picker) — panel grows upward
+    //   - footer hint appear/disappear — panel grows downward
+    //   - chat collapse↔expand — panel grows upward
+    let inputRowTopY = topLeft.y
+    let inputRowBottomY = inputRowTopY - PoroTheme.collapsedSurfaceHeight
+    let panelBottomY = inputRowBottomY - normalBelowInputRow
     return NSRect(
       x: topLeft.x,
-      y: topLeft.y - normalTotalHeight,
+      y: panelBottomY,
       width: PoroTheme.width,
       height: normalTotalHeight
     )
@@ -377,8 +425,12 @@ final class AssistantWindowController {
   private func clampedTopLeft(_ topLeft: CGPoint, in screenFrame: NSRect) -> CGPoint {
     let minX = screenFrame.minX
     let maxX = screenFrame.maxX - PoroTheme.width
-    let minTopY = screenFrame.minY + normalTotalHeight
-    let maxTopY = screenFrame.maxY
+    // `topLeft.y` is the input row's TOP edge in screen y. Panel bottom is at
+    // `topLeft.y - collapsedSurfaceHeight - normalBelowInputRow`; actual top is
+    // `panel.bottom + normalTotalHeight`. Keep bottom above screen minY and top below
+    // screen maxY.
+    let minTopY = screenFrame.minY + PoroTheme.collapsedSurfaceHeight + normalBelowInputRow
+    let maxTopY = screenFrame.maxY + PoroTheme.collapsedSurfaceHeight + normalBelowInputRow - normalTotalHeight
 
     return CGPoint(
       x: min(max(topLeft.x, minX), maxX),
@@ -388,10 +440,23 @@ final class AssistantWindowController {
 
   // MARK: - Height changes
 
-  private func setNormalPanelHeight(_ totalHeight: CGFloat, animated: Bool) {
-    guard abs(normalTotalHeight - totalHeight) > 0.5 else { return }
-    normalTotalHeight = totalHeight
-    applyNormalFrame(animated: animated)
+  private func setNormalPanelHeight(baseline: CGFloat, overlay: CGFloat, belowInputRow: CGFloat, animated: Bool) {
+    let newTotal = baseline + overlay
+    let totalChanged = abs(normalTotalHeight - newTotal) > 0.5
+    let belowChanged = abs(normalBelowInputRow - belowInputRow) > 0.5
+    guard totalChanged || belowChanged else { return }
+    // Animate baseline transitions (chat collapse↔expand, route changes) with the spring;
+    // skip animation when the change is overlay-driven (slash menu / picker open or close) so
+    // the AppKit window resize stays in lockstep with SwiftUI's instant layout. Footer-strip
+    // appear/disappear (a `belowInputRow` change with overlay constant) is also instant for
+    // the same reason. The previous baseline is recoverable from
+    // `normalTotalHeight - normalOverlayHeight`.
+    let oldBaseline = normalTotalHeight - normalOverlayHeight
+    let isOverlayDriven = abs(oldBaseline - baseline) < 0.5 || belowChanged
+    normalTotalHeight = newTotal
+    normalOverlayHeight = overlay
+    normalBelowInputRow = belowInputRow
+    applyNormalFrame(animated: animated && !isOverlayDriven)
   }
 
   private func setFocusPanelHeight(_ totalHeight: CGFloat, animated: Bool) {
@@ -495,9 +560,12 @@ final class AssistantWindowController {
 
   private func nudgeNormalPanel(dx: CGFloat, dy: CGFloat) {
     let currentFrame = normalPanel.isVisible ? normalPanel.frame : normalFrame()
+    // Convert the moved top edge back to the input-row-anchored form `normalFrame()` expects
+    // (same conversion as `onDragEnded`): inputRowTopY = panel.top - overlay.
+    let inputRowTopY = currentFrame.maxY + dy - normalOverlayHeight
     let movedTopLeft = CGPoint(
       x: currentFrame.origin.x + dx,
-      y: currentFrame.maxY + dy
+      y: inputRowTopY
     )
     panelPlacement = .manual(topLeft: movedTopLeft)
     persistPanelPlacement()
