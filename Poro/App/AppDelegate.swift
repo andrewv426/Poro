@@ -25,10 +25,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
 
-    KeyboardShortcuts.setShortcut(
-      .init(.t, modifiers: [.command, .option]),
-      for: .toggleAssistantWindow
-    )
+    if KeyboardShortcuts.getShortcut(for: .toggleAssistantWindow) == nil {
+      KeyboardShortcuts.setShortcut(
+        .init(.t, modifiers: [.command, .option]),
+        for: .toggleAssistantWindow
+      )
+    }
 
     KeyboardShortcuts.onKeyUp(for: .toggleAssistantWindow) { [weak self] in
       Task { @MainActor in

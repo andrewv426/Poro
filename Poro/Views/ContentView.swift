@@ -40,6 +40,8 @@ struct ContentView: View {
       return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
+    case .settings:
+      return PoroTheme.settingsHeight
     }
   }
 
@@ -55,6 +57,8 @@ struct ContentView: View {
       return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
+    case .settings:
+      return PoroTheme.settingsHeight
     }
   }
 
@@ -119,6 +123,8 @@ struct ContentView: View {
             onDismissRequest()
           }
         }
+      case .settings:
+        SettingsView(poroController: poroController)
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: PoroTheme.windowCornerRadius, style: .continuous))
@@ -137,7 +143,7 @@ struct ContentView: View {
         TopToolbarView(
           onNewConversation: poroController.chatController(for: context).startNewConversation,
           onHistory: {},
-          onSettings: {},
+          onSettings: context == .normal ? { poroController.openSettings() } : {},
           statusLine: poroController.sessionStatusLine,
           onEndSession: poroController.isFocusSessionActive ? {
             _ = poroController.focusSessionController.handleSessionCommand(.end)
@@ -258,6 +264,8 @@ struct ContentView: View {
       poroController.cancelFocusSetup()
     case .summary:
       onDismissRequest()
+    case .settings:
+      poroController.closeSettings()
     }
   }
 

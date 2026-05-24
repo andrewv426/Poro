@@ -4,6 +4,7 @@ enum PanelRoute: Equatable {
   case chat
   case focusSetup
   case summary
+  case settings
 }
 
 enum AssistantPanelContext: Equatable {

@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Collect all Swift files under Poro/ except the three that the project-wide
-# typecheck can't resolve standalone (entry points and SPM-backed file).
+# Collect all Swift files under Poro/ except the ones that the project-wide
+# typecheck can't resolve standalone (entry points and SPM-backed files).
 FILES=$(find Poro -name '*.swift' \
   ! -path 'Poro/App/AppDelegate.swift' \
   ! -path 'Poro/KeyboardShortcuts.swift' \

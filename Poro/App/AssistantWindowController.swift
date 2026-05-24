@@ -14,8 +14,9 @@ final class AssistantWindowController {
     case manual(topLeft: CGPoint)
   }
 
-  private enum KeyboardMove {
-    static let step: CGFloat = 24
+  private var keyboardMoveStep: CGFloat {
+    let stored = UserDefaults.standard.double(forKey: SettingsKeys.nudgeStep)
+    return stored >= 4 ? CGFloat(stored) : 24
   }
 
   private enum DefaultsKey {
@@ -57,6 +58,15 @@ final class AssistantWindowController {
       width: PoroTheme.focusWidth,
       height: focusTotalHeight
     )
+
+    normalPanel.dragEnabledProvider = {
+      UserDefaults.standard.bool(forKey: SettingsKeys.mouseDragEnabled)
+    }
+    normalPanel.onDragEnded = { [weak self] topLeft in
+      guard let self else { return }
+      panelPlacement = .manual(topLeft: topLeft)
+      persistPanelPlacement()
+    }
 
     normalPanel.contentViewController = NSHostingController(
       rootView: ContentView(
@@ -432,6 +442,8 @@ final class AssistantWindowController {
       return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
+    case .settings:
+      return PoroTheme.settingsHeight
     }
   }
 
@@ -454,11 +466,12 @@ final class AssistantWindowController {
   private func handleKeyboardEvent(_ event: NSEvent) -> NSEvent? {
     guard shouldHandleNormalPanelMove(event) else { return event }
 
+    let step = keyboardMoveStep
     switch event.keyCode {
-    case 123: nudgeNormalPanel(dx: -KeyboardMove.step, dy: 0); return nil
-    case 124: nudgeNormalPanel(dx: KeyboardMove.step, dy: 0); return nil
-    case 125: nudgeNormalPanel(dx: 0, dy: -KeyboardMove.step); return nil
-    case 126: nudgeNormalPanel(dx: 0, dy: KeyboardMove.step); return nil
+    case 123: nudgeNormalPanel(dx: -step, dy: 0); return nil
+    case 124: nudgeNormalPanel(dx: step, dy: 0); return nil
+    case 125: nudgeNormalPanel(dx: 0, dy: -step); return nil
+    case 126: nudgeNormalPanel(dx: 0, dy: step); return nil
     default: return event
     }
   }
