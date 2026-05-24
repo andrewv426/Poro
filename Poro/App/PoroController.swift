@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import SwiftUI
 
 @Observable
 @MainActor
@@ -8,6 +9,7 @@ final class PoroController {
   let chatController: ChatController
   let focusChatController: ChatController
   let focusSessionController: FocusSessionController
+  let spotifyPlaybackPoller: SpotifyPlaybackPoller
 
   var panelRoute: PanelRoute = .chat
   var focusPanelRoute: PanelRoute = .chat
@@ -32,6 +34,10 @@ final class PoroController {
   private let customDurationKey = "focus.customDurationMinutes"
   static let durationPresets = [25, 45, 60]
 
+  var spotifyIsPlaying: Bool {
+    spotifyPlaybackPoller.isPlayingMusic
+  }
+
   var lastCustomDurationMinutes: Int? {
     let value = UserDefaults.standard.integer(forKey: customDurationKey)
     return value > 0 ? value : nil
@@ -47,6 +53,7 @@ final class PoroController {
     self.focusChatController = focusChatController
     self.focusSessionController = focusSessionController
     self.intentRouter = intentRouter
+    spotifyPlaybackPoller = SpotifyPlaybackPoller()
 
     focusSessionController.onSummaryAvailable = { [weak self] _ in
       self?.focusPanelRoute = .summary
@@ -119,6 +126,8 @@ final class PoroController {
       if panelRoute != .summary, panelRoute != .focusSetup, panelRoute != .settings {
         panelRoute = .chat
       }
+      // Only the normal-chat panel needs playback polling — focus chat never shows Spotify controls.
+      spotifyPlaybackPoller.startObserving()
     case .focus:
       if focusPanelRoute != .summary {
         focusPanelRoute = .chat
@@ -128,31 +137,50 @@ final class PoroController {
     refreshComposerHint(in: context)
   }
 
+  func panelWasHidden(_ context: AssistantPanelContext) {
+    if context == .normal {
+      spotifyPlaybackPoller.stopObserving()
+    }
+  }
+
   func openSettings() {
-    panelRoute = .settings
-    composerHint = nil
+    withoutAnimation {
+      panelRoute = .settings
+      composerHint = nil
+    }
   }
 
   func closeSettings() {
-    panelRoute = .chat
-    refreshComposerHint(in: .normal)
+    withoutAnimation {
+      panelRoute = .chat
+      refreshComposerHint(in: .normal)
+    }
   }
 
   func updateComposerDraft(_ text: String, in context: AssistantPanelContext) {
     switch context {
     case .normal:
+      // Mode transitions cascade multiple state mutations (composerMode + composerHint, plus
+      // showsFooterStrip flipping false→true when the hint appears). Wrap each cluster in an
+      // animation-suppressing transaction so ContentView's ambient `.animation(value:)` modifiers
+      // don't pick up the cascade and produce a flicker.
+
       // Fast-path the full-verb trigger so power users typing "/play " in one go skip the menu.
       if text == "/play ", isComposerEligibleForChipTrigger {
-        composerMode = .spotifyPlay(query: "")
-        composerDraft = ""
-        setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: context)
+        withoutAnimation {
+          composerMode = .spotifyPlay(query: "")
+          composerDraft = ""
+          setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: context)
+        }
         return
       }
 
       if text == "/focus ", isComposerEligibleForChipTrigger {
-        composerMode = .focusStart(args: "")
-        composerDraft = ""
-        setComposerHint(ComposerHint(title: "↵ Set up focus session"), in: context)
+        withoutAnimation {
+          composerMode = .focusStart(args: "")
+          composerDraft = ""
+          setComposerHint(ComposerHint(title: "↵ Set up focus session"), in: context)
+        }
         return
       }
 
@@ -160,11 +188,13 @@ final class PoroController {
       if text.hasPrefix("/") {
         let prefix = String(text.dropFirst())
         if !prefix.contains(" ") {
-          let matches = SlashCommandRegistry.matches(prefix: prefix)
+          let matches = SlashCommandRegistry.matches(prefix: prefix, spotifyPlaying: spotifyIsPlaying)
           if !matches.isEmpty {
-            composerMode = .slashMenu(prefix: prefix, matches: matches)
-            composerDraft = text
-            setComposerHint(nil, in: context)
+            withoutAnimation {
+              composerMode = .slashMenu(prefix: prefix, matches: matches)
+              composerDraft = text
+              setComposerHint(nil, in: context)
+            }
             return
           }
           // No matches but still slash-prefix: fall through to plain text editing, drop the menu.
@@ -188,69 +218,184 @@ final class PoroController {
     refreshComposerHint(in: context)
   }
 
+  /// Pre-keystroke handler for the space character. When the current draft is exactly `/play`
+  /// or `/focus`, transition into chip mode synchronously and tell the caller to consume the
+  /// keystroke (`return true`). This avoids the one-frame "/play " ghost in the NSTextField
+  /// field editor before SwiftUI's deferred render pass updates the binding to empty.
+  ///
+  /// Returns false to let AppKit insert the space normally.
+  func handleChipTriggerSpace(currentDraft: String) -> Bool {
+    guard isComposerEligibleForChipTrigger else { return false }
+    if currentDraft == "/play" {
+      withoutAnimation {
+        composerMode = .spotifyPlay(query: "")
+        composerDraft = ""
+        setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: .normal)
+      }
+      return true
+    }
+    if currentDraft == "/focus" {
+      withoutAnimation {
+        composerMode = .focusStart(args: "")
+        composerDraft = ""
+        setComposerHint(ComposerHint(title: "↵ Set up focus session"), in: .normal)
+      }
+      return true
+    }
+    return false
+  }
+
   /// True when the composer is in a state that can transition straight into chip mode via the
   /// full-verb fast path. Either the user typed "/play " from scratch or they were in the menu.
   private var isComposerEligibleForChipTrigger: Bool {
     switch composerMode {
     case .normal, .slashMenu:
       true
-    case .spotifyPlay, .focusStart:
+    case .spotifyPlay, .spotifyPlaylistChip, .spotifyOptionPicker, .focusStart:
       false
     }
   }
 
   /// Invoked from the slash-menu UI when the user selects a command (Enter or click).
   func selectSlashCommand(_ descriptor: SlashCommandDescriptor) {
-    switch descriptor.id {
-    case "play":
-      composerMode = .spotifyPlay(query: "")
-      composerDraft = ""
-      setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: .normal)
-    case "focus":
-      composerMode = .focusStart(args: "")
-      composerDraft = ""
-      setComposerHint(ComposerHint(title: "↵ Set up focus session"), in: .normal)
-    default:
-      composerMode = .normal
-      composerDraft = ""
+    // Wrap the cascade in a no-animation transaction so SwiftUI doesn't pick up the ambient
+    // shellAnimation/fadeAnimation modifiers that observe composerMode / composerHint /
+    // showsFooterStrip. Without this, picking `/play` from the menu fires three concurrent
+    // animations (mode → chip, hint → "Resume Spotify", footer strip appears) and the
+    // overlapping fades read as a flicker.
+    withoutAnimation {
+      switch descriptor.id {
+      case "play":
+        composerMode = .spotifyPlay(query: "")
+        composerDraft = ""
+        setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: .normal)
+      case "focus":
+        composerMode = .focusStart(args: "")
+        composerDraft = ""
+        setComposerHint(ComposerHint(title: "↵ Set up focus session"), in: .normal)
+      case "stop":
+        composerMode = .normal
+        composerDraft = ""
+        setComposerHint(nil, in: .normal)
+        handleSpotifyCommand(.pause, originalText: "/stop")
+      case "skip":
+        composerMode = .normal
+        composerDraft = ""
+        setComposerHint(nil, in: .normal)
+        handleSpotifyCommand(.skip, originalText: "/skip")
+      case "shuffle":
+        // Default to enabling shuffle from the menu; explicit `/shuffle off` requires typing.
+        composerMode = .normal
+        composerDraft = ""
+        setComposerHint(nil, in: .normal)
+        handleSpotifyCommand(.shuffle(enabled: true), originalText: "/shuffle")
+      default:
+        composerMode = .normal
+        composerDraft = ""
+      }
     }
   }
 
   /// Esc inside the slash menu — close the menu and clear the slash text so the composer is fresh.
   func dismissSlashMenu() {
     guard case .slashMenu = composerMode else { return }
-    composerMode = .normal
-    composerDraft = ""
-    refreshComposerHint(in: .normal)
+    withoutAnimation {
+      composerMode = .normal
+      composerDraft = ""
+      refreshComposerHint(in: .normal)
+    }
   }
 
   /// Updates the query portion of the Spotify chip. Refreshes the composer hint to reflect
-  /// resume vs play.
+  /// resume vs play. Called on every keystroke in chip mode — the no-animation transaction is
+  /// critical here: without it, every keystroke that crosses the empty↔non-empty boundary
+  /// flips composerHint and fires a 0.22s fadeAnimation, which is the typing flicker the user
+  /// reported.
   func setSpotifyQuery(_ query: String) {
     guard case .spotifyPlay = composerMode else { return }
-    composerMode = .spotifyPlay(query: query)
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    composerHint = ComposerHint(title: trimmed.isEmpty ? "↵ Resume Spotify" : "↵ Play on Spotify")
+    withoutAnimation {
+      composerMode = .spotifyPlay(query: query)
+      let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      composerHint = ComposerHint(title: trimmed.isEmpty ? "↵ Resume Spotify" : "↵ Play on Spotify")
+    }
   }
 
   /// Exits Spotify chip mode and clears the composer entirely. Backspacing out of an empty chip
   /// should leave the user with a fresh raw composer, not "/play " residue.
   func exitSpotifyMode() {
-    composerMode = .normal
-    composerDraft = ""
-    refreshComposerHint(in: .normal)
+    withoutAnimation {
+      composerMode = .normal
+      composerDraft = ""
+      refreshComposerHint(in: .normal)
+    }
+  }
+
+  /// Picker arrow-key navigation.
+  func setPickerSelectedIndex(_ index: Int) {
+    guard case let .spotifyOptionPicker(state) = composerMode else { return }
+    let clamped = max(0, min(state.options.count - 1, index))
+    composerMode = .spotifyOptionPicker(state: SpotifyPickerState(
+      kind: state.kind,
+      query: state.query,
+      options: state.options,
+      selectedIndex: clamped
+    ))
+  }
+
+  /// Picker selection — Enter / click. Routes the chosen option through the Spotify command path.
+  func confirmPickerSelection() {
+    guard case let .spotifyOptionPicker(state) = composerMode else { return }
+    guard !state.options.isEmpty else { return }
+    let option = state.options[max(0, min(state.options.count - 1, state.selectedIndex))]
+    withoutAnimation {
+      composerMode = .normal
+      composerDraft = ""
+      refreshComposerHint(in: .normal)
+    }
+
+    let displayName = option.title
+    let originalText: String
+    let command: SpotifyCommand
+    switch state.kind {
+    case .track:
+      command = .pickTrack(uri: option.uri, displayName: displayName)
+      originalText = "/play \(displayName)"
+    case .playlist:
+      command = .pickPlaylist(uri: option.uri, displayName: displayName)
+      originalText = "/play playlist \(displayName)"
+    }
+    handleSpotifyCommand(command, originalText: originalText)
+  }
+
+  /// Picker Escape — back out to the originating chip mode with the user's typed query restored.
+  func cancelPicker() {
+    guard case let .spotifyOptionPicker(state) = composerMode else { return }
+    withoutAnimation {
+      switch state.kind {
+      case .track:
+        composerMode = .spotifyPlay(query: state.query)
+        composerHint = ComposerHint(title: state.query.isEmpty ? "↵ Resume Spotify" : "↵ Play on Spotify")
+      case .playlist:
+        composerMode = .spotifyPlaylistChip(query: state.query)
+        composerHint = ComposerHint(title: "↵ Pick a playlist")
+      }
+    }
   }
 
   func setFocusArgs(_ args: String) {
     guard case .focusStart = composerMode else { return }
-    composerMode = .focusStart(args: args)
-    composerHint = ComposerHint(title: "↵ Set up focus session")
+    withoutAnimation {
+      composerMode = .focusStart(args: args)
+      composerHint = ComposerHint(title: "↵ Set up focus session")
+    }
   }
 
   func exitFocusMode() {
-    composerMode = .normal
-    composerDraft = ""
-    refreshComposerHint(in: .normal)
+    withoutAnimation {
+      composerMode = .normal
+      composerDraft = ""
+      refreshComposerHint(in: .normal)
+    }
   }
 
   func submitComposer(in context: AssistantPanelContext) {
@@ -260,7 +405,6 @@ final class PoroController {
     if context == .normal, case let .spotifyPlay(query) = composerMode {
       let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
       submission = trimmedQuery.isEmpty ? "/play" : "/play \(trimmedQuery)"
-      composerMode = .normal
     } else if context == .normal, case let .focusStart(args) = composerMode {
       let trimmedArgs = args.trimmingCharacters(in: .whitespacesAndNewlines)
       submission = trimmedArgs.isEmpty ? "/focus" : "/focus \(trimmedArgs)"
@@ -280,37 +424,78 @@ final class PoroController {
       hasActiveSession: focusSessionController.hasActiveSession
     )
 
+    // Every intent below mutates composerMode + composerHint + composerDraft in the same
+    // render cycle; wrap each cluster in an animation-suppressing transaction so the ambient
+    // .animation(value:) modifiers in ContentView don't drive a flicker.
     switch intent {
     case let .chat(message):
-      setRoute(.chat, in: context)
-      setComposerDraft("", in: context)
-      setComposerHint(nil, in: context)
+      withoutAnimation {
+        composerMode = .normal
+        setRoute(.chat, in: context)
+        setComposerDraft("", in: context)
+        setComposerHint(nil, in: context)
+      }
       chatController(for: context).send(message)
     case let .startFocus(draft):
-      setComposerDraft("", in: context)
-      setComposerHint(nil, in: context)
-      focusSetupDraft = FocusStartDraft(
-        goal: draft.goal,
-        durationMinutes: draft.durationMinutes
-      )
-      panelRoute = .focusSetup
+      withoutAnimation {
+        composerMode = .normal
+        setComposerDraft("", in: context)
+        setComposerHint(nil, in: context)
+        focusSetupDraft = FocusStartDraft(
+          goal: draft.goal,
+          durationMinutes: draft.durationMinutes
+        )
+        panelRoute = .focusSetup
+      }
     case let .sessionCommand(command):
-      setComposerDraft("", in: context)
-      setComposerHint(nil, in: context)
+      withoutAnimation {
+        composerMode = .normal
+        setComposerDraft("", in: context)
+        setComposerHint(nil, in: context)
+      }
       handleSessionCommand(command, originalText: trimmed, in: context)
     case let .spotify(command):
       // Slash commands are normal-chat only. In focus chat we fall through to a regular LLM message
       // so users typing "/play foo" mid-session don't get surprising behavior.
       guard context == .normal else {
-        setRoute(.chat, in: context)
-        setComposerDraft("", in: context)
-        setComposerHint(nil, in: context)
+        withoutAnimation {
+          composerMode = .normal
+          setRoute(.chat, in: context)
+          setComposerDraft("", in: context)
+          setComposerHint(nil, in: context)
+        }
         chatController(for: context).send(trimmed)
         return
       }
-      setRoute(.chat, in: context)
-      setComposerDraft("", in: context)
-      setComposerHint(nil, in: context)
+
+      // For `.play` and `.playPlaylist` submitted from the chip with a non-empty query, fetch
+      // options and show the picker rather than playing immediately. Other commands (pause, skip,
+      // shuffle, resume `/play` with no query, picker selections) execute directly.
+      if case let .play(query) = command, let query, SpotifyAuth.shared.isConfigured {
+        withoutAnimation {
+          setRoute(.chat, in: context)
+          setComposerDraft("", in: context)
+          setComposerHint(ComposerHint(title: "Searching Spotify…"), in: context)
+        }
+        fetchTrackPicker(query: query)
+        return
+      }
+      if case let .playPlaylist(query) = command, SpotifyAuth.shared.isConfigured {
+        withoutAnimation {
+          setRoute(.chat, in: context)
+          setComposerDraft("", in: context)
+          setComposerHint(ComposerHint(title: "Loading playlists…"), in: context)
+        }
+        fetchPlaylistPicker(query: query)
+        return
+      }
+
+      withoutAnimation {
+        composerMode = .normal
+        setRoute(.chat, in: context)
+        setComposerDraft("", in: context)
+        setComposerHint(nil, in: context)
+      }
       handleSpotifyCommand(command, originalText: trimmed)
     }
   }
@@ -335,12 +520,14 @@ final class PoroController {
       musicPreference: music
     )
     focusSetupDraft = .default
-    panelRoute = .chat
-    focusPanelRoute = .chat
-    composerDraft = ""
-    focusComposerDraft = ""
-    composerHint = nil
-    focusComposerHint = nil
+    withoutAnimation {
+      panelRoute = .chat
+      focusPanelRoute = .chat
+      composerDraft = ""
+      focusComposerDraft = ""
+      composerHint = nil
+      focusComposerHint = nil
+    }
     focusChatController.startNewConversation()
     onDismissRequested?()
   }
@@ -359,14 +546,132 @@ final class PoroController {
     focusChatController.injectAssistantPrompt(prompt)
   }
 
+  // MARK: - Spotify picker fetch
+
+  private func fetchTrackPicker(query: SpotifyPlayQuery) {
+    let originalQuery = composerDraftLabel(for: query)
+    Task { @MainActor in
+      let api = SpotifyWebAPI(auth: SpotifyAuth.shared)
+      do {
+        let hits = try await api.searchTracks(query, limit: 5)
+        guard !hits.isEmpty else {
+          withoutAnimation {
+            self.composerMode = .normal
+            self.composerHint = nil
+          }
+          self.chatController.appendLocalExchange(
+            userText: "/play \(originalQuery)",
+            assistantText: "No matches on Spotify for \(originalQuery)."
+          )
+          return
+        }
+        let options = hits.map {
+          SpotifyPickerOption(id: $0.uri, uri: $0.uri, title: $0.displayName, subtitle: nil)
+        }
+        // Suppress ambient animations on the chip→picker transition: composerMode swap and
+        // composerHint update fire in the same render cycle, and ContentView's
+        // .animation(fadeAnimation, value: composerHint) would otherwise cross-fade the hint
+        // over the picker insertion.
+        withoutAnimation {
+          self.composerMode = .spotifyOptionPicker(state: SpotifyPickerState(
+            kind: .track,
+            query: originalQuery,
+            options: options,
+            selectedIndex: 0
+          ))
+          self.composerHint = ComposerHint(title: "↑↓ to choose · ↵ to play")
+        }
+      } catch {
+        withoutAnimation {
+          self.composerMode = .normal
+          self.composerHint = nil
+        }
+        self.chatController.appendLocalExchange(
+          userText: "/play \(originalQuery)",
+          assistantText: "Couldn't reach Spotify: \(error.localizedDescription)"
+        )
+      }
+    }
+  }
+
+  private func fetchPlaylistPicker(query: String?) {
+    Task { @MainActor in
+      let api = SpotifyWebAPI(auth: SpotifyAuth.shared)
+      do {
+        let userHits = try await api.userPlaylists()
+        let filtered: [SpotifyPlaylistHit] = if let query, !query.isEmpty {
+          userHits.filter { $0.name.lowercased().contains(query.lowercased()) }
+        } else {
+          userHits
+        }
+        guard !filtered.isEmpty else {
+          withoutAnimation {
+            self.composerMode = .normal
+            self.composerHint = nil
+          }
+          let displayQuery = query?.isEmpty == false ? " for \(query!)" : ""
+          self.chatController.appendLocalExchange(
+            userText: query.map { "/play playlist \($0)" } ?? "/play playlist",
+            assistantText: "No playlists found\(displayQuery)."
+          )
+          return
+        }
+        let options = filtered.prefix(8).map {
+          SpotifyPickerOption(
+            id: $0.id,
+            uri: $0.uri,
+            title: $0.name,
+            subtitle: $0.ownerName.map { "by \($0)" }
+          )
+        }
+        withoutAnimation {
+          self.composerMode = .spotifyOptionPicker(state: SpotifyPickerState(
+            kind: .playlist,
+            query: query ?? "",
+            options: Array(options),
+            selectedIndex: 0
+          ))
+          self.composerHint = ComposerHint(title: "↑↓ to choose · ↵ to play")
+        }
+      } catch {
+        withoutAnimation {
+          self.composerMode = .normal
+          self.composerHint = nil
+        }
+        self.chatController.appendLocalExchange(
+          userText: query.map { "/play playlist \($0)" } ?? "/play playlist",
+          assistantText: "Couldn't reach Spotify: \(error.localizedDescription)"
+        )
+      }
+    }
+  }
+
+  private func composerDraftLabel(for query: SpotifyPlayQuery) -> String {
+    switch query {
+    case let .freeform(text): text
+    case let .trackByArtist(track, artist): "\(track) by \(artist)"
+    }
+  }
+
   private func handleSpotifyCommand(_ command: SpotifyCommand, originalText: String) {
     // Hint to the system that Spotify is about to activate (intentional) so the snap-back behaves
     // cooperatively on macOS 14+. No-op on the Web API path because Spotify never activates there.
-    if #available(macOS 14.0, *), case .play(query: .some) = command {
+    if #available(macOS 14.0, *), shouldHintActivation(for: command) {
       NSApp.yieldActivation(toApplicationWithBundleIdentifier: "com.spotify.client")
     }
     spotifyController.execute(command) { [weak self] outcome in
       self?.appendSpotifyExchange(originalText: originalText, outcome: outcome)
+      // Nudge the playback state so the menu reacts faster than the 10-second poll tick.
+      self?.spotifyPlaybackPoller.refreshNow()
+    }
+  }
+
+  private func shouldHintActivation(for command: SpotifyCommand) -> Bool {
+    switch command {
+    case .play(query: .some), .playPlaylist, .pickTrack, .pickPlaylist:
+      true
+    case .play(query: .none), .pause, .skip, .shuffle:
+      false
     }
   }
 
@@ -380,6 +685,14 @@ final class PoroController {
       "Now playing on Spotify: \(query)"
     case .resumed:
       "Resumed Spotify playback."
+    case .paused:
+      "Paused Spotify."
+    case .skipped:
+      "Skipped to the next track."
+    case let .shuffleSet(enabled):
+      enabled ? "Shuffle on." : "Shuffle off."
+    case let .playlistStarted(name):
+      "Now playing playlist: \(name)"
     case let .launchFailed(reason):
       "Couldn't open Spotify: \(reason)"
     case .notAuthorized:
@@ -392,6 +705,8 @@ final class PoroController {
       "Spotify Web API requires Premium."
     case let .networkError(reason):
       "Couldn't reach Spotify: \(reason)"
+    case .nothingPlaying:
+      "Nothing is playing on Spotify right now."
     }
 
     chatController.appendLocalExchange(userText: originalText, assistantText: assistantText)
@@ -452,5 +767,21 @@ final class PoroController {
       hasActiveSession: focusSessionController.hasActiveSession
     )
     setComposerHint(preview.hint, in: context)
+  }
+
+  /// Run a body inside a transaction that fully suppresses SwiftUI's implicit animations,
+  /// even in subtrees that have an explicit `.animation(value:)` modifier in scope.
+  ///
+  /// `Transaction(animation: nil)` alone is NOT enough: an explicit `.animation(animation,
+  /// value:)` modifier *rewrites* `transaction.animation` for its subtree, overriding the nil
+  /// we set at the source. Setting `disablesAnimations = true` flags the transaction as
+  /// "really don't animate" — the explicit modifiers honor it and skip the animation.
+  ///
+  /// Use this anywhere we mutate composer state that ContentView animates implicitly
+  /// (e.g. `composerHint` via `.animation(PoroTheme.fadeAnimation, value: composerHint)`).
+  private func withoutAnimation(_ body: () -> Void) {
+    var txn = Transaction(animation: nil)
+    txn.disablesAnimations = true
+    withTransaction(txn, body)
   }
 }

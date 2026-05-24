@@ -7,7 +7,13 @@ struct ContentView: View {
   @State private var slashSelectedIndex: Int = 0
 
   private let onDismissRequest: () -> Void
-  private let onPanelHeightChange: (CGFloat) -> Void
+  /// Reports `(baseline, overlayContribution, belowInputRow)` so the window controller can
+  /// position the panel correctly. Baseline transitions (chat collapse↔expand, route changes)
+  /// animate; overlay growth (slash menu, picker) is instant. `belowInputRow` is the portion of
+  /// baseline that sits *below* the input row — the composer-hint footer strip block when
+  /// shown. The controller drops the panel bottom by this amount so the input row's top edge
+  /// stays put on screen.
+  private let onPanelHeightChange: (CGFloat, CGFloat, CGFloat) -> Void
   private let onFocusTabDragChanged: () -> Void
   private let onFocusTabDragEnded: () -> Void
 
@@ -15,7 +21,7 @@ struct ContentView: View {
     poroController: PoroController,
     context: AssistantPanelContext = .normal,
     onDismissRequest: @escaping () -> Void = {},
-    onPanelHeightChange: @escaping (CGFloat) -> Void = { _ in },
+    onPanelHeightChange: @escaping (CGFloat, CGFloat, CGFloat) -> Void = { _, _, _ in },
     onFocusTabDragChanged: @escaping () -> Void = {},
     onFocusTabDragEnded: @escaping () -> Void = {}
   ) {
@@ -28,6 +34,10 @@ struct ContentView: View {
   }
 
   private var totalHeight: CGFloat {
+    baseTotalHeight + overlayContribution
+  }
+
+  private var baseTotalHeight: CGFloat {
     if context == .focus, poroController.isFocusPanelTucked { return PoroTheme.tabHeight }
     let focus = context == .focus
     switch poroController.route(for: context) {
@@ -35,6 +45,11 @@ struct ContentView: View {
       if poroController.isChatExpanded(in: context) {
         return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
       }
+      // Collapsed chat baseline ALWAYS includes the 32-px footer slot below the input row.
+      // The slot is reserved permanently — empty when no hint, fading in/out as the hint text
+      // appears/disappears. Panel height stays constant; only the content inside the slot
+      // changes. This was the lesson from earlier flicker attempts: any time the panel grew
+      // or shrank for the hint, the visual transition betrayed itself.
       return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
     case .focusSetup:
       return PoroTheme.focusSetupHeight
@@ -42,6 +57,44 @@ struct ContentView: View {
       return PoroTheme.summaryHeight
     case .settings:
       return PoroTheme.settingsHeight
+    }
+  }
+
+  /// Total vertical space occupied by the footer hint strip + the 12-px VStack spacing above it.
+  /// Currently a magic constant; matches the value used in `overlayBottomPadding`.
+  private var footerStripBlock: CGFloat {
+    32
+  }
+
+  /// Part of `baseTotalHeight` that lives BELOW the input row. In normal collapsed chat the
+  /// 32-px footer slot is permanently reserved (constant), so `belowInputRow` is constant too.
+  /// `normalFrame` uses this to anchor the panel bottom: input row top stays put on screen,
+  /// the footer slot always extends below it regardless of whether a hint is currently visible.
+  private var belowInputRow: CGFloat {
+    guard context == .normal, poroController.route(for: context) == .chat,
+          !poroController.isChatExpanded(in: context)
+    else { return 0 }
+    return footerStripBlock
+  }
+
+  /// Extra panel height needed so the slash-menu / Spotify-picker overlay isn't clipped by the
+  /// NSPanel frame in COLLAPSED mode. Mirrors the row geometry hardcoded in `SlashCommandMenu`
+  /// (30 px) and `SpotifyOptionPickerOverlay` (38 px) — keep those in sync if either changes.
+  ///
+  /// In **expanded** chat mode the panel already has enough vertical space, and the menu
+  /// renders INSIDE the chat surface as an `.overlay(alignment: .bottom)` (covering the bottom
+  /// of the message list, Slack/Discord style). So expanded contributes 0 — no panel growth.
+  private var overlayContribution: CGFloat {
+    guard context == .normal else { return 0 }
+    if poroController.isChatExpanded(in: context) { return 0 }
+    let gap: CGFloat = 6 // matches the y-offset gap used by both overlays
+    switch poroController.composerMode {
+    case let .slashMenu(_, matches):
+      return CGFloat(matches.count) * 30 + 8 + gap
+    case let .spotifyOptionPicker(state):
+      return CGFloat(state.options.count) * 38 + 12 + gap
+    default:
+      return 0
     }
   }
 
@@ -73,13 +126,43 @@ struct ContentView: View {
         .frame(width: PoroTheme.focusWidth, height: PoroTheme.tabHeight, alignment: .leading)
       } else {
         let panelWidth = context == .focus ? PoroTheme.focusWidth : PoroTheme.width
-        VStack(spacing: showsFooterStrip ? 12 : 0) {
-          surface
-            .frame(width: panelWidth, height: surfaceHeight, alignment: .top)
+        // ZStack so the slash menu / Spotify picker can render as a SIBLING of `surface` — i.e.
+        // outside `surface`'s rounded-corner clipShape. Previously the menus were `InputRowView`
+        // overlays *inside* `surface`, and their negative-y offset drew them into the rounded
+        // mask in collapsed-panel mode → invisible. Placing them at this level lets them occupy
+        // the height the panel grows by (`overlayContribution`) above the surface.
+        //
+        // The inner VStack pins to `.bottom` so when the window grows by `overlayContribution`
+        // (see `totalHeight`), the grown space appears *above* the surface — exactly where the
+        // overlay needs to render. The overlay itself anchors to the bottom of the ZStack and
+        // pads up to clear the input row.
+        ZStack(alignment: .bottomLeading) {
+          VStack(spacing: hasFooterSlot ? 12 : 0) {
+            surface
+              .frame(width: panelWidth, height: surfaceHeight, alignment: .top)
 
-          if showsFooterStrip {
-            footerStrip
-              .transition(.opacity)
+            // Reserve the footer slot whenever the panel could legitimately show a hint
+            // (collapsed normal chat). Its size is constant; only the inner content fades
+            // in/out as `composerHint` toggles. This keeps the input row's screen position
+            // perfectly stable across hint appearance — no panel resize, no row shift, no
+            // flicker. When the slot isn't applicable (chat expanded, focus session active,
+            // route is not .chat), the VStack collapses normally.
+            if hasFooterSlot {
+              footerStrip
+                .frame(maxWidth: .infinity)
+            }
+          }
+          .frame(width: panelWidth, height: totalHeight, alignment: .bottom)
+
+          // Collapsed mode: render the slash menu / picker in the panel's grown-upward region
+          // (sibling of surface, outside its clipShape). In expanded mode this branch is skipped
+          // and the overlay is attached INSIDE the chat surface via `.overlay()` further down,
+          // covering the bottom of the message list like Slack / Discord / Notion — see the
+          // overlay attached to `surface` in `chatSurface`.
+          if !poroController.isChatExpanded(in: context) {
+            overlayLayer
+              .padding(.leading, 46)
+              .padding(.bottom, overlayBottomPadding)
           }
         }
         .frame(width: panelWidth, height: totalHeight, alignment: .top)
@@ -98,16 +181,19 @@ struct ContentView: View {
     .animation(PoroTheme.shellAnimation, value: poroController.isFocusPanelTucked)
     .animation(PoroTheme.fadeAnimation, value: poroController.composerHint(for: context))
     .onAppear {
-      onPanelHeightChange(totalHeight)
+      onPanelHeightChange(baseTotalHeight, overlayContribution, belowInputRow)
       focusInputSoon()
     }
-    .onChange(of: totalHeight) { _, height in
-      onPanelHeightChange(height)
+    .onChange(of: totalHeight) { _, _ in
+      onPanelHeightChange(baseTotalHeight, overlayContribution, belowInputRow)
+    }
+    .onChange(of: belowInputRow) { _, _ in
+      onPanelHeightChange(baseTotalHeight, overlayContribution, belowInputRow)
     }
   }
 
   private var surface: some View {
-    ZStack {
+    ZStack(alignment: .bottomLeading) {
       HUDMaterialView()
       PoroTheme.windowTint
 
@@ -125,6 +211,19 @@ struct ContentView: View {
         }
       case .settings:
         SettingsView(poroController: poroController)
+      }
+
+      // Expanded chat mode: slash menu / Spotify picker renders INSIDE the surface, anchored
+      // above the input row. The surrounding `.clipShape` clips it to the rounded corners so
+      // it visually belongs to the chat surface (no floating-popup detachment from the panel,
+      // which is what users saw in the prior architecture). Collapsed mode skips this branch
+      // and renders the overlay in the panel's grown-upward region — see the outer ZStack.
+      if context == .normal, poroController.route(for: context) == .chat,
+         poroController.isChatExpanded(in: context)
+      {
+        overlayLayer
+          .padding(.leading, 46)
+          .padding(.bottom, PoroTheme.collapsedSurfaceHeight + 6)
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: PoroTheme.windowCornerRadius, style: .continuous))
@@ -203,41 +302,43 @@ struct ContentView: View {
           composerMode: composerModeBinding,
           onExitSpotifyMode: { poroController.exitSpotifyMode() },
           onExitFocusMode: { poroController.exitFocusMode() },
-          slashMatches: currentSlashMatches,
-          slashSelectedIndex: $slashSelectedIndex,
-          onSlashSelect: { descriptor in
-            poroController.selectSlashCommand(descriptor)
-            slashSelectedIndex = 0
-          },
-          onSlashDismiss: {
-            poroController.dismissSlashMenu()
-            slashSelectedIndex = 0
-          }
+          onChipTriggerSpace: { draft in poroController.handleChipTriggerSpace(currentDraft: draft) }
         )
       }
     }
   }
 
-  private var showsFooterStrip: Bool {
+  /// True when the panel reserves a permanent footer slot (collapsed normal chat). The slot's
+  /// size is constant; only its inner content (hint text) fades in/out.
+  private var hasFooterSlot: Bool {
     guard poroController.route(for: context) == .chat,
           !poroController.isChatExpanded(in: context)
     else { return false }
-
-    if poroController.composerHint(for: context) != nil { return true }
-    if context == .focus, poroController.isFocusSessionActive,
-       poroController.sessionStatusLine != nil { return true }
-    return false
+    // Normal panel: always reserve. Focus panel: reserve only when there's content to show
+    // (existing behavior — focus session status line).
+    if context == .normal { return true }
+    return poroController.isFocusSessionActive && poroController.sessionStatusLine != nil
   }
 
-  @ViewBuilder
   private var footerStrip: some View {
-    if let composerHint = poroController.composerHint(for: context) {
-      ComposerHintStripView(title: composerHint.title)
-    } else if context == .focus, poroController.isFocusSessionActive,
-              let statusLine = poroController.sessionStatusLine
-    {
-      SessionStatusStripView(statusLine: statusLine)
+    // Pin the slot's height so it contributes the SAME vertical space whether or not a hint
+    // is currently shown. Without this, the ZStack would collapse to 0pt when its conditional
+    // content is nil; the inner VStack's content would fall short of `totalHeight` and
+    // `.alignment: .bottom` would push the surface 20pt up to fill the gap — the visible
+    // "spring up" the user reported. Content fades inside the fixed-height slot via opacity.
+    ZStack {
+      if let composerHint = poroController.composerHint(for: context) {
+        ComposerHintStripView(title: composerHint.title)
+          .transition(.opacity)
+      } else if context == .focus, poroController.isFocusSessionActive,
+                let statusLine = poroController.sessionStatusLine
+      {
+        SessionStatusStripView(statusLine: statusLine)
+          .transition(.opacity)
+      }
     }
+    .frame(height: 20)
+    .animation(PoroTheme.fadeAnimation, value: poroController.composerHint(for: context))
   }
 
   private func handleEscape() {
@@ -294,6 +395,48 @@ struct ContentView: View {
     return nil
   }
 
+  private var currentSpotifyPickerState: SpotifyPickerState? {
+    if case let .spotifyOptionPicker(state) = poroController.composerMode {
+      return state
+    }
+    return nil
+  }
+
+  /// Slash-menu / Spotify-picker rendered as a sibling of `surface` so it isn't clipped by the
+  /// surface's rounded `clipShape`. Combined with `overlayContribution`'s window-height grow,
+  /// the overlay always has room above the input row regardless of collapsed/expanded state.
+  @ViewBuilder
+  private var overlayLayer: some View {
+    if let matches = currentSlashMatches, !matches.isEmpty {
+      SlashCommandMenuOverlay(
+        matches: matches,
+        selectedIndex: $slashSelectedIndex,
+        onSelect: { descriptor in
+          poroController.selectSlashCommand(descriptor)
+          slashSelectedIndex = 0
+        },
+        onDismiss: {
+          poroController.dismissSlashMenu()
+          slashSelectedIndex = 0
+        }
+      )
+    } else if let pickerState = currentSpotifyPickerState {
+      SpotifyOptionPickerOverlay(
+        state: pickerState,
+        onSelectIndex: { poroController.setPickerSelectedIndex($0) },
+        onConfirm: { poroController.confirmPickerSelection() },
+        onCancel: { poroController.cancelPicker() }
+      )
+    }
+  }
+
+  /// Aligns the overlay's bottom edge 6 px above the input row's top. In ZStack-from-bottom
+  /// coords, the input row's top is at `baseTotalHeight` (since baseline = input row + anything
+  /// below it like the footer strip, and overlay grows ABOVE the input row).
+  private var overlayBottomPadding: CGFloat {
+    baseTotalHeight + 6
+  }
+
   private var composerModeBinding: Binding<ComposerMode> {
     Binding(
       get: { poroController.composerMode },
@@ -305,11 +448,11 @@ struct ContentView: View {
           poroController.setFocusArgs(args)
         case .normal:
           switch poroController.composerMode {
-          case .spotifyPlay: poroController.exitSpotifyMode()
+          case .spotifyPlay, .spotifyPlaylistChip: poroController.exitSpotifyMode()
           case .focusStart: poroController.exitFocusMode()
           default: break
           }
-        case .slashMenu:
+        case .slashMenu, .spotifyPlaylistChip, .spotifyOptionPicker:
           break
         }
       }

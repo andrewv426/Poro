@@ -18,10 +18,7 @@ struct SlashCommandMenu: View {
       }
     }
     .padding(.vertical, 4)
-    .background(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .fill(PoroTheme.windowTint)
-    )
+    .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 10, style: .continuous)
         .stroke(PoroTheme.innerBorder, lineWidth: 1)
