@@ -149,6 +149,13 @@ final class PoroController {
         return
       }
 
+      if text == "/focus ", isComposerEligibleForChipTrigger {
+        composerMode = .focusStart(args: "")
+        composerDraft = ""
+        setComposerHint(ComposerHint(title: "↵ Set up focus session"), in: context)
+        return
+      }
+
       // Slash-menu mode: text begins with "/" and the user is still typing the verb (no space yet).
       if text.hasPrefix("/") {
         let prefix = String(text.dropFirst())
@@ -187,7 +194,7 @@ final class PoroController {
     switch composerMode {
     case .normal, .slashMenu:
       true
-    case .spotifyPlay:
+    case .spotifyPlay, .focusStart:
       false
     }
   }
@@ -199,6 +206,10 @@ final class PoroController {
       composerMode = .spotifyPlay(query: "")
       composerDraft = ""
       setComposerHint(ComposerHint(title: "↵ Resume Spotify"), in: .normal)
+    case "focus":
+      composerMode = .focusStart(args: "")
+      composerDraft = ""
+      setComposerHint(ComposerHint(title: "↵ Set up focus session"), in: .normal)
     default:
       composerMode = .normal
       composerDraft = ""
@@ -230,6 +241,18 @@ final class PoroController {
     refreshComposerHint(in: .normal)
   }
 
+  func setFocusArgs(_ args: String) {
+    guard case .focusStart = composerMode else { return }
+    composerMode = .focusStart(args: args)
+    composerHint = ComposerHint(title: "↵ Set up focus session")
+  }
+
+  func exitFocusMode() {
+    composerMode = .normal
+    composerDraft = ""
+    refreshComposerHint(in: .normal)
+  }
+
   func submitComposer(in context: AssistantPanelContext) {
     // If the normal-chat composer is in Spotify chip mode, synthesize the canonical "/play [query]"
     // string and reset the mode before falling into the existing router path.
@@ -237,6 +260,10 @@ final class PoroController {
     if context == .normal, case let .spotifyPlay(query) = composerMode {
       let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
       submission = trimmedQuery.isEmpty ? "/play" : "/play \(trimmedQuery)"
+      composerMode = .normal
+    } else if context == .normal, case let .focusStart(args) = composerMode {
+      let trimmedArgs = args.trimmingCharacters(in: .whitespacesAndNewlines)
+      submission = trimmedArgs.isEmpty ? "/focus" : "/focus \(trimmedArgs)"
       composerMode = .normal
     } else {
       submission = composerDraft(for: context)

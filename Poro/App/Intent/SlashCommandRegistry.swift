@@ -17,6 +17,12 @@ enum SlashCommandRegistry {
       title: "/play",
       subtitle: "Play a song on Spotify"
     ),
+    SlashCommandDescriptor(
+      id: "focus",
+      verb: "focus",
+      title: "/focus",
+      subtitle: "Start a focus session"
+    ),
   ]
 
   /// Returns commands whose verb starts with the given (case-insensitive) prefix. An empty prefix

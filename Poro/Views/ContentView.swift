@@ -193,31 +193,28 @@ struct ContentView: View {
           .transition(.opacity)
       }
 
-      InputRowView(
-        draft: composerDraftBinding,
-        isFocused: $isInputFocused,
-        isStreaming: poroController.chatController(for: context).isSending,
-        onSubmit: { poroController.submitComposer(in: context) },
-        onStop: poroController.chatController(for: context).stopStreaming,
-        composerMode: context == .normal ? composerModeBinding : nil,
-        onExitSpotifyMode: context == .normal
-          ? { poroController.exitSpotifyMode() }
-          : nil,
-        slashMatches: context == .normal ? currentSlashMatches : nil,
-        slashSelectedIndex: context == .normal ? $slashSelectedIndex : nil,
-        onSlashSelect: context == .normal
-          ? { descriptor in
+      if context == .normal {
+        InputRowView(
+          draft: composerDraftBinding,
+          isFocused: $isInputFocused,
+          isStreaming: poroController.chatController(for: context).isSending,
+          onSubmit: { poroController.submitComposer(in: context) },
+          onStop: poroController.chatController(for: context).stopStreaming,
+          composerMode: composerModeBinding,
+          onExitSpotifyMode: { poroController.exitSpotifyMode() },
+          onExitFocusMode: { poroController.exitFocusMode() },
+          slashMatches: currentSlashMatches,
+          slashSelectedIndex: $slashSelectedIndex,
+          onSlashSelect: { descriptor in
             poroController.selectSlashCommand(descriptor)
             slashSelectedIndex = 0
-          }
-          : nil,
-        onSlashDismiss: context == .normal
-          ? {
+          },
+          onSlashDismiss: {
             poroController.dismissSlashMenu()
             slashSelectedIndex = 0
           }
-          : nil
-      )
+        )
+      }
     }
   }
 
@@ -301,10 +298,19 @@ struct ContentView: View {
     Binding(
       get: { poroController.composerMode },
       set: { newMode in
-        if case let .spotifyPlay(query) = newMode {
+        switch newMode {
+        case let .spotifyPlay(query):
           poroController.setSpotifyQuery(query)
-        } else {
-          poroController.exitSpotifyMode()
+        case let .focusStart(args):
+          poroController.setFocusArgs(args)
+        case .normal:
+          switch poroController.composerMode {
+          case .spotifyPlay: poroController.exitSpotifyMode()
+          case .focusStart: poroController.exitFocusMode()
+          default: break
+          }
+        case .slashMenu:
+          break
         }
       }
     )
@@ -345,16 +351,16 @@ private struct DistractionDecisionView: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .firstTextBaseline, spacing: 10) {
         VStack(alignment: .leading, spacing: 3) {
           Text("Distracting tab")
-            .font(PoroTheme.font(size: 11, weight: .semibold))
+            .font(PoroTheme.font(size: 12, weight: .semibold))
             .foregroundStyle(PoroTheme.accent)
             .textCase(.uppercase)
 
           Text(pendingDistraction.label)
-            .font(PoroTheme.font(size: 14, weight: .semibold))
+            .font(PoroTheme.font(size: 16, weight: .semibold))
             .foregroundStyle(PoroTheme.bodyText)
             .lineLimit(1)
         }
@@ -363,7 +369,7 @@ private struct DistractionDecisionView: View {
 
         if pendingDistraction.resolution == .pending, !pendingDistraction.isExplaining {
           Text("\(pendingDistraction.remainingSeconds)s")
-            .font(.system(size: 13, weight: .bold, design: .monospaced))
+            .font(.system(size: 15, weight: .bold, design: .monospaced))
             .foregroundStyle(PoroTheme.stopColor)
         }
       }
@@ -383,7 +389,7 @@ private struct DistractionDecisionView: View {
         statusText(message)
       }
     }
-    .padding(12)
+    .padding(16)
     .background(
       RoundedRectangle(cornerRadius: 10, style: .continuous)
         .fill(PoroTheme.hoverBackground)
@@ -421,10 +427,10 @@ private struct DistractionDecisionView: View {
         text: $justificationDraft
       )
       .textFieldStyle(.plain)
-      .font(PoroTheme.font(size: 13, weight: .medium))
+      .font(PoroTheme.font(size: 14, weight: .medium))
       .foregroundStyle(PoroTheme.bodyText)
       .padding(.horizontal, 10)
-      .frame(height: 34)
+      .frame(height: 40)
       .background(
         RoundedRectangle(cornerRadius: 8, style: .continuous)
           .fill(PoroTheme.windowTint)
@@ -461,7 +467,7 @@ private struct DistractionDecisionView: View {
 
   private func statusText(_ text: String) -> some View {
     Text(text)
-      .font(PoroTheme.font(size: 12, weight: .medium))
+      .font(PoroTheme.font(size: 13, weight: .medium))
       .foregroundStyle(PoroTheme.mutedText)
       .lineLimit(2)
   }
@@ -475,10 +481,10 @@ private struct DistractionDecisionView: View {
   ) -> some View {
     Button(action: action) {
       Text(title)
-        .font(PoroTheme.font(size: 12.5, weight: .semibold))
+        .font(PoroTheme.font(size: 14, weight: .semibold))
         .foregroundStyle(foreground.opacity(isDisabled ? 0.5 : 1))
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, 11)
         .background(
           RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(background.opacity(isDisabled ? 0.45 : 1))
