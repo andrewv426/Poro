@@ -12,6 +12,14 @@ enum SlashCommandParser {
       let query = rest.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !query.isEmpty else { return .spotify(.play(query: nil)) }
       return .spotify(.play(query: parsePlayQuery(query)))
+    case "focus":
+      let parser = AppIntentParser()
+      let trimmed = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+      let duration = parser.parseDuration(from: trimmed) ?? 45
+      // Prepend a space so goal-extraction's " on "/" for " matchers find clauses
+      // that start at the beginning of the trimmed args (e.g. "/focus on writing").
+      let goal = parser.parseFocusGoal(from: " " + trimmed)
+      return .startFocus(FocusStartDraft(goal: goal, durationMinutes: duration))
     default:
       return nil
     }

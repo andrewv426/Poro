@@ -61,6 +61,9 @@ struct AppIntentRouter {
     if case let .spotify(.play(query)) = intent {
       return ComposerHint(title: query == nil ? "↵ Resume Spotify" : "↵ Play on Spotify")
     }
+    if case .startFocus = intent {
+      return ComposerHint(title: "↵ Set up focus session")
+    }
     return nil
   }
 
