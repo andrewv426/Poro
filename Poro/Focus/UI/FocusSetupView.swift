@@ -11,6 +11,12 @@ struct FocusSetupView: View {
   private let minCustomMinutes = 1
   private let maxCustomMinutes = 240
 
+  private var isGoalProvided: Bool {
+    !poroController.focusSetupDraft.goal
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .isEmpty
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
       HStack {
@@ -106,14 +112,15 @@ struct FocusSetupView: View {
       } label: {
         Text("Confirm")
           .font(PoroTheme.font(size: 13, weight: .semibold))
-          .foregroundStyle(PoroTheme.onAccent)
+          .foregroundStyle(PoroTheme.onAccent.opacity(isGoalProvided ? 1 : 0.5))
           .frame(maxWidth: .infinity)
           .padding(.vertical, 10)
           .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-              .fill(PoroTheme.accent)
+              .fill(PoroTheme.accent.opacity(isGoalProvided ? 1 : 0.45))
           )
       }
+      .disabled(!isGoalProvided)
       .buttonStyle(.plain)
     }
     .padding(20)
