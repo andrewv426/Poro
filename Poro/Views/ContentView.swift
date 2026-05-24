@@ -31,11 +31,11 @@ struct ContentView: View {
     if context == .focus, poroController.isFocusPanelTucked { return PoroTheme.tabHeight }
     let focus = context == .focus
     switch poroController.route(for: context) {
-    case .chat, .focusSetup:
-      if poroController.isChatExpanded(in: context) {
-        return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
-      }
-      return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
+    case .chat:
+      return chatTotalHeight(focus: focus)
+    case .focusSetup:
+      // Overlay needs room to render the setup card; never shrink below the chat behind it.
+      return max(chatTotalHeight(focus: focus), PoroTheme.focusSetupHeight)
     case .summary:
       return PoroTheme.summaryHeight
     }
@@ -44,14 +44,27 @@ struct ContentView: View {
   private var surfaceHeight: CGFloat {
     let focus = context == .focus
     switch poroController.route(for: context) {
-    case .chat, .focusSetup:
-      if poroController.isChatExpanded(in: context) {
-        return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
-      }
-      return focus ? PoroTheme.focusCollapsedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
+    case .chat:
+      return chatSurfaceHeight(focus: focus)
+    case .focusSetup:
+      return max(chatSurfaceHeight(focus: focus), PoroTheme.focusSetupHeight)
     case .summary:
       return PoroTheme.summaryHeight
     }
+  }
+
+  private func chatTotalHeight(focus: Bool) -> CGFloat {
+    if poroController.isChatExpanded(in: context) {
+      return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
+    }
+    return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
+  }
+
+  private func chatSurfaceHeight(focus: Bool) -> CGFloat {
+    if poroController.isChatExpanded(in: context) {
+      return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
+    }
+    return focus ? PoroTheme.focusCollapsedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
   }
 
   var body: some View {
