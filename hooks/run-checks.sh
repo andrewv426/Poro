@@ -6,6 +6,10 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Always ensure the env symlink exists, even on doc-only turns — fresh worktrees
+# need it set up before any future build, regardless of what this turn touched.
+./hooks/ensure-env-symlink.sh
+
 # Skip if no Swift files have been touched this turn. Doc-only and research-only
 # turns don't need typecheck/lint/build/auto-commit.
 if [ -z "$(git status --porcelain -- 'Poro/**/*.swift' 'Poro/*.swift' 2>/dev/null)" ]; then
