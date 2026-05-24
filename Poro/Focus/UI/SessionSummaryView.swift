@@ -19,12 +19,24 @@ struct SessionSummaryView: View {
           .foregroundStyle(PoroTheme.mutedText)
       }
 
-      summaryRow("Goal", value: summary.goal)
-      summaryRow("Time on task", value: "\(summary.completedMinutes)m")
-      summaryRow("Nudges", value: "\(summary.nudgeCount)")
-      summaryRow("Allowed overrides", value: "\(summary.allowedOverrideCount)")
-      summaryRow("Denied overrides", value: "\(summary.deniedOverrideCount)")
-      summaryRow("Top distractions", value: summary.topDistractions.joined(separator: ", ").ifEmpty("None"))
+      rowPair(
+        summaryRow("Goal", value: summary.goal),
+        summaryRow(
+          "Time on task",
+          value: "\(summary.completedMinutes)m of \(summary.plannedDurationMinutes)m",
+          accent: true
+        )
+      )
+
+      rowPair(
+        summaryRow("Nudges", value: "\(summary.nudgeCount)"),
+        summaryRow("Allowed overrides", value: "\(summary.allowedOverrideCount)")
+      )
+
+      rowPair(
+        summaryRow("Denied overrides", value: "\(summary.deniedOverrideCount)"),
+        summaryRow("Top distractions", value: summary.topDistractions.joined(separator: ", ").ifEmpty("None"))
+      )
 
       if !summary.memorableArguments.isEmpty {
         VStack(alignment: .leading, spacing: 8) {
@@ -44,14 +56,21 @@ struct SessionSummaryView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
-  private func summaryRow(_ label: String, value: String) -> some View {
+  private func summaryRow(_ label: String, value: String, accent: Bool = false) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(label)
         .font(PoroTheme.font(size: 12, weight: .medium))
         .foregroundStyle(PoroTheme.mutedText)
       Text(value)
         .font(PoroTheme.font(size: 14, weight: .semibold))
-        .foregroundStyle(PoroTheme.bodyText)
+        .foregroundStyle(accent ? PoroTheme.accent : PoroTheme.bodyText)
+    }
+  }
+
+  private func rowPair(_ left: some View, _ right: some View) -> some View {
+    HStack(alignment: .top, spacing: 32) {
+      left.frame(maxWidth: .infinity, alignment: .leading)
+      right.frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 }
