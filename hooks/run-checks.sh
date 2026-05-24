@@ -15,6 +15,8 @@ fi
 
 FAIL=0
 
+./hooks/ensure-env-symlink.sh
+
 echo "▶ typecheck"
 if ! ./hooks/typecheck.sh; then
   echo "✗ typecheck failed"
