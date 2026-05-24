@@ -3,7 +3,7 @@ import SwiftUI
 enum PoroTheme {
   static let width: CGFloat = 560
   static let focusWidth: CGFloat = 420
-  static let focusExpandedSurfaceHeight: CGFloat = 280
+  static let focusExpandedSurfaceHeight: CGFloat = 420
   static let focusCollapsedSurfaceHeight: CGFloat = 56
   static let focusCollapsedTotalHeight: CGFloat = 76
   static let tabHeight: CGFloat = 44
