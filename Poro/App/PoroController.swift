@@ -116,7 +116,7 @@ final class PoroController {
   func prepareForPresentation(in context: AssistantPanelContext) {
     switch context {
     case .normal:
-      if panelRoute != .summary, panelRoute != .focusSetup {
+      if panelRoute != .summary, panelRoute != .focusSetup, panelRoute != .settings {
         panelRoute = .chat
       }
     case .focus:
@@ -126,6 +126,16 @@ final class PoroController {
     }
 
     refreshComposerHint(in: context)
+  }
+
+  func openSettings() {
+    panelRoute = .settings
+    composerHint = nil
+  }
+
+  func closeSettings() {
+    panelRoute = .chat
+    refreshComposerHint(in: .normal)
   }
 
   func updateComposerDraft(_ text: String, in context: AssistantPanelContext) {
