@@ -6,6 +6,13 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Skip if no Swift files have been touched this turn. Doc-only and research-only
+# turns don't need typecheck/lint/build/auto-commit.
+if [ -z "$(git status --porcelain -- 'Poro/**/*.swift' 'Poro/*.swift' 2>/dev/null)" ]; then
+  echo "▶ no Swift changes — skipping checks"
+  exit 0
+fi
+
 FAIL=0
 
 echo "▶ typecheck"
