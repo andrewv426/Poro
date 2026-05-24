@@ -31,13 +31,11 @@ struct ContentView: View {
     if context == .focus, poroController.isFocusPanelTucked { return PoroTheme.tabHeight }
     let focus = context == .focus
     switch poroController.route(for: context) {
-    case .chat:
+    case .chat, .focusSetup:
       if poroController.isChatExpanded(in: context) {
         return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
       }
       return focus ? PoroTheme.focusCollapsedTotalHeight : PoroTheme.collapsedTotalHeight
-    case .focusSetup:
-      return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
     }
@@ -46,13 +44,11 @@ struct ContentView: View {
   private var surfaceHeight: CGFloat {
     let focus = context == .focus
     switch poroController.route(for: context) {
-    case .chat:
+    case .chat, .focusSetup:
       if poroController.isChatExpanded(in: context) {
         return focus ? PoroTheme.focusExpandedSurfaceHeight : PoroTheme.expandedSurfaceHeight
       }
       return focus ? PoroTheme.focusCollapsedSurfaceHeight : PoroTheme.collapsedSurfaceHeight
-    case .focusSetup:
-      return PoroTheme.focusSetupHeight
     case .summary:
       return PoroTheme.summaryHeight
     }
@@ -108,10 +104,8 @@ struct ContentView: View {
       PoroTheme.windowTint
 
       switch poroController.route(for: context) {
-      case .chat:
+      case .chat, .focusSetup:
         chatSurface
-      case .focusSetup:
-        FocusSetupView(poroController: poroController)
       case .summary:
         if let summary = poroController.focusSessionController.latestSummary {
           SessionSummaryView(summary: summary) {
@@ -119,6 +113,11 @@ struct ContentView: View {
             onDismissRequest()
           }
         }
+      }
+
+      if poroController.route(for: context) == .focusSetup {
+        FocusSetupOverlay(poroController: poroController)
+          .transition(.opacity)
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: PoroTheme.windowCornerRadius, style: .continuous))
@@ -290,10 +289,19 @@ struct ContentView: View {
     Binding(
       get: { poroController.composerMode },
       set: { newMode in
-        if case let .spotifyPlay(query) = newMode {
+        switch newMode {
+        case let .spotifyPlay(query):
           poroController.setSpotifyQuery(query)
-        } else {
-          poroController.exitSpotifyMode()
+        case let .focusStart(args):
+          poroController.setFocusArgs(args)
+        case .normal:
+          switch poroController.composerMode {
+          case .spotifyPlay: poroController.exitSpotifyMode()
+          case .focusStart: poroController.exitFocusMode()
+          default: break
+          }
+        case .slashMenu:
+          break
         }
       }
     )
@@ -312,6 +320,35 @@ struct ContentView: View {
         poroController.focusSessionController.updatePendingDistractionJustification(draft)
       }
     )
+  }
+}
+
+private struct FocusSetupOverlay: View {
+  @Bindable var poroController: PoroController
+
+  var body: some View {
+    ZStack {
+      Color.black.opacity(0.45)
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture {
+          poroController.cancelFocusSetup()
+        }
+
+      FocusSetupView(poroController: poroController)
+        .frame(width: 440)
+        .background(
+          RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(PoroTheme.hoverBackground)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(PoroTheme.innerBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+    }
   }
 }
 
