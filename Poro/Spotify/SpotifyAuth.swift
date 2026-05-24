@@ -21,7 +21,7 @@ final class SpotifyAuth: NSObject, @unchecked Sendable {
   static let shared = SpotifyAuth()
 
   private let redirectURI = "poro://spotify-callback"
-  private let scopes = "user-read-playback-state user-modify-playback-state"
+  private let scopes = "user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative"
   private let authorizeBase = URL(string: "https://accounts.spotify.com/authorize")!
   private let tokenURL = URL(string: "https://accounts.spotify.com/api/token")!
 
@@ -33,16 +33,28 @@ final class SpotifyAuth: NSObject, @unchecked Sendable {
 
   /// Returns a valid access token, refreshing if needed and prompting for authorization on the
   /// first call. Throws `SpotifyAuthError.notConfigured` if `SPOTIFY_CLIENT_ID` is unset.
+  ///
+  /// If the stored token's granted scopes don't cover the currently-required scope set (this
+  /// happens once after we extend `scopes` in a new release), the stored token is discarded and
+  /// the OAuth flow re-runs so the user re-consents. Token refresh alone won't widen scopes.
   func currentToken() async throws -> String {
     guard let clientID = SpotifyConfig.clientID() else {
       throw SpotifyAuthError.notConfigured
     }
 
-    if let stored = tokenStore.read(), !stored.isExpiringSoon {
+    let requiredScopes = Self.scopeSet(scopes)
+
+    if let stored = tokenStore.read(),
+       !stored.isExpiringSoon,
+       stored.hasScopes(requiredScopes)
+    {
       return stored.accessToken
     }
 
-    if let stored = tokenStore.read(), let refresh = stored.refreshToken {
+    if let stored = tokenStore.read(),
+       stored.hasScopes(requiredScopes),
+       let refresh = stored.refreshToken
+    {
       do {
         let refreshed = try await refreshTokens(clientID: clientID, refreshToken: refresh)
         tokenStore.write(refreshed)
@@ -51,15 +63,45 @@ final class SpotifyAuth: NSObject, @unchecked Sendable {
         logger.warning("Spotify refresh failed: \(String(describing: error)); falling back to authorize")
         tokenStore.clear()
       }
+    } else if tokenStore.read() != nil {
+      // Stored token's scopes are insufficient — refresh won't widen them. Discard and re-auth.
+      logger.info("Spotify scopes widened; clearing stored token to re-prompt OAuth consent")
+      tokenStore.clear()
     }
 
     let fresh = try await authorize(clientID: clientID)
     return fresh.accessToken
   }
 
+  private static func scopeSet(_ scopes: String) -> Set<String> {
+    Set(scopes.split(separator: " ").map(String.init))
+  }
+
   /// Clears stored tokens. Forces the next `currentToken()` call to re-authorize.
   func clearTokens() {
     tokenStore.clear()
+  }
+
+  /// Non-interactive variant of `currentToken()` — never presents the OAuth web view. Returns
+  /// `nil` if no stored token covers the required scopes, or if a silent refresh fails. Use this
+  /// from background pollers and prefetches; user-initiated commands should keep using
+  /// `currentToken()` so the OAuth flow can run when a missing scope is actually needed.
+  func cachedToken() async -> String? {
+    guard let clientID = SpotifyConfig.clientID() else { return nil }
+    let requiredScopes = Self.scopeSet(scopes)
+
+    guard let stored = tokenStore.read(), stored.hasScopes(requiredScopes) else {
+      return nil
+    }
+    if !stored.isExpiringSoon { return stored.accessToken }
+    guard let refresh = stored.refreshToken else { return nil }
+    do {
+      let refreshed = try await refreshTokens(clientID: clientID, refreshToken: refresh)
+      tokenStore.write(refreshed)
+      return refreshed.accessToken
+    } catch {
+      return nil
+    }
   }
 
   // MARK: - Authorize (PKCE)
@@ -157,11 +199,14 @@ final class SpotifyAuth: NSObject, @unchecked Sendable {
       URLQueryItem(name: "client_id", value: clientID),
     ]
     let token = try await postForToken(body: components.percentEncodedQuery ?? "")
+    // Spotify omits refresh_token from refresh responses but does echo the granted scopes. Keep
+    // the existing refresh token and the granted-scope set so the next consent check still passes.
     if token.refreshToken == nil {
       return SpotifyToken(
         accessToken: token.accessToken,
         refreshToken: refreshToken,
-        expiresAt: token.expiresAt
+        expiresAt: token.expiresAt,
+        scopes: token.scopes
       )
     }
     return token
@@ -190,10 +235,12 @@ final class SpotifyAuth: NSObject, @unchecked Sendable {
     do {
       let decoded = try JSONDecoder().decode(TokenResponse.self, from: data)
       let expiresAt = Date().addingTimeInterval(TimeInterval(decoded.expiresIn))
+      let granted = decoded.scope.map { Self.scopeSet($0) } ?? []
       return SpotifyToken(
         accessToken: decoded.accessToken,
         refreshToken: decoded.refreshToken,
-        expiresAt: expiresAt
+        expiresAt: expiresAt,
+        scopes: granted
       )
     } catch {
       throw SpotifyAuthError.invalidResponse
@@ -229,9 +276,17 @@ struct SpotifyToken: Codable, Equatable {
   let accessToken: String
   let refreshToken: String?
   let expiresAt: Date
+  /// Scopes granted by Spotify on this token. Decoded from the token endpoint's `scope` response.
+  /// Default-empty for backwards compatibility with pre-scope-aware persisted tokens — those
+  /// will fail the `hasScopes` check on first read and trigger an automatic re-auth.
+  var scopes: Set<String> = []
 
   var isExpiringSoon: Bool {
     expiresAt.timeIntervalSinceNow < 60
+  }
+
+  func hasScopes(_ required: Set<String>) -> Bool {
+    required.isSubset(of: scopes)
   }
 }
 
@@ -239,11 +294,13 @@ private struct TokenResponse: Decodable {
   let accessToken: String
   let refreshToken: String?
   let expiresIn: Int
+  let scope: String?
 
   enum CodingKeys: String, CodingKey {
     case accessToken = "access_token"
     case refreshToken = "refresh_token"
     case expiresIn = "expires_in"
+    case scope
   }
 }
 

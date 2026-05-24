@@ -3,12 +3,17 @@ import Foundation
 enum SpotifyResult: Equatable {
   case played(query: String)
   case resumed
+  case paused
+  case skipped
+  case shuffleSet(enabled: Bool)
+  case playlistStarted(name: String)
   case launchFailed(reason: String)
   case notAuthorized
   case scriptError(message: String)
   case authNeeded
   case premiumRequired
   case networkError(reason: String)
+  case nothingPlaying
 }
 
 /// The result plus whether Poro needs to snap focus back. The AppleScript path always returns

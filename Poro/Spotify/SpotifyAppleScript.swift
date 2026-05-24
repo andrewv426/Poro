@@ -13,9 +13,26 @@ enum SpotifyAppleScript {
     return "tell application id \"com.spotify.client\" to play track \"spotify:search:track:\(inner)\""
   }
 
+  /// Builds the AppleScript source to play a specific Spotify URI (track, playlist, album).
+  static func playURISource(_ uri: String) -> String {
+    "tell application id \"com.spotify.client\" to play track \"\(uri)\""
+  }
+
   /// Builds the AppleScript source to resume current playback.
   static func resumeSource() -> String {
     "tell application id \"com.spotify.client\" to play"
+  }
+
+  static func pauseSource() -> String {
+    "tell application id \"com.spotify.client\" to pause"
+  }
+
+  static func nextTrackSource() -> String {
+    "tell application id \"com.spotify.client\" to next track"
+  }
+
+  static func shuffleSource(enabled: Bool) -> String {
+    "tell application id \"com.spotify.client\" to set shuffling to \(enabled ? "true" : "false")"
   }
 
   /// Wraps a search term in `field:"value"` form. `%22` is the encoded double-quote so the term is
