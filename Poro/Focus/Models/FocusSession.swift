@@ -5,4 +5,6 @@ struct FocusSession: Equatable {
   let goal: String
   let durationMinutes: Int
   let startedAt: Date
+  // TODO: wire to Spotify when integration lands
+  let musicPreference: String
 }

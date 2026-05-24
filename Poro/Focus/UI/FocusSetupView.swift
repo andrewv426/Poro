@@ -42,6 +42,23 @@ struct FocusSetupView: View {
       }
 
       VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 6) {
+          Text("Music")
+            .font(PoroTheme.font(size: 12, weight: .medium))
+            .foregroundStyle(PoroTheme.mutedText)
+          Text("(optional)")
+            .font(PoroTheme.font(size: 12, weight: .medium))
+            .foregroundStyle(PoroTheme.mutedText.opacity(0.7))
+        }
+
+        TextField(
+          "instrumental, lo-fi, ambient…",
+          text: $poroController.focusSetupDraft.music
+        )
+        .textFieldStyle(.roundedBorder)
+      }
+
+      VStack(alignment: .leading, spacing: 8) {
         Text("Duration")
           .font(PoroTheme.font(size: 12, weight: .medium))
           .foregroundStyle(PoroTheme.mutedText)

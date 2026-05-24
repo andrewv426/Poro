@@ -322,13 +322,19 @@ final class PoroController {
 
   func confirmFocusSetup() {
     let goal = focusSetupDraft.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+    let music = focusSetupDraft.music.trimmingCharacters(in: .whitespacesAndNewlines)
     let duration = max(1, min(240, focusSetupDraft.durationMinutes))
 
     if !PoroController.durationPresets.contains(duration) {
       UserDefaults.standard.set(duration, forKey: customDurationKey)
     }
 
-    focusSessionController.startSession(goal: goal, durationMinutes: duration)
+    focusSessionController.startSession(
+      goal: goal,
+      durationMinutes: duration,
+      musicPreference: music
+    )
+    focusSetupDraft = .default
     panelRoute = .chat
     focusPanelRoute = .chat
     composerDraft = ""
