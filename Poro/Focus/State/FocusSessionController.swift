@@ -161,15 +161,19 @@ final class FocusSessionController {
   /// - Parameters:
   ///   - goal: The user's goal for the session.
   ///   - durationMinutes: How long the session should last.
-  func startSession(goal: String, durationMinutes: Int) {
+  ///   - musicPreference: Optional music preference captured on the session
+  ///     (currently inert; reserved for Spotify pre-fill).
+  func startSession(goal: String, durationMinutes: Int, musicPreference: String = "") {
     let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
     let resolvedGoal = trimmedGoal.isEmpty ? "your work" : trimmedGoal
     let resolvedDuration = max(1, durationMinutes)
+    let trimmedMusic = musicPreference.trimmingCharacters(in: .whitespacesAndNewlines)
 
     activeSession = FocusSession(
       goal: resolvedGoal,
       durationMinutes: resolvedDuration,
-      startedAt: Date()
+      startedAt: Date(),
+      musicPreference: trimmedMusic
     )
 
     state = .active

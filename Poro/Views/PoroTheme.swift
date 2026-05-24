@@ -10,7 +10,7 @@ enum PoroTheme {
   static let tabVisibleWidth: CGFloat = 36
   static let collapsedSurfaceHeight: CGFloat = 56
   static let collapsedTotalHeight: CGFloat = 88
-  static let focusSetupHeight: CGFloat = 252
+  static let focusSetupHeight: CGFloat = 320
   static let summaryHeight: CGFloat = 330
   static let expandedSurfaceHeight: CGFloat = 480
   static let settingsHeight: CGFloat = 460
