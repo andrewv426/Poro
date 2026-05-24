@@ -196,6 +196,7 @@ struct ContentView: View {
           onStop: poroController.chatController(for: context).stopStreaming,
           composerMode: composerModeBinding,
           onExitSpotifyMode: { poroController.exitSpotifyMode() },
+          onExitFocusMode: { poroController.exitFocusMode() },
           slashMatches: currentSlashMatches,
           slashSelectedIndex: $slashSelectedIndex,
           onSlashSelect: { descriptor in

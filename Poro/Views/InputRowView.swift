@@ -13,6 +13,7 @@ struct InputRowView: View {
   /// chip + query field instead of the standard TextField. Only the normal chat surface passes this.
   var composerMode: Binding<ComposerMode>?
   var onExitSpotifyMode: (() -> Void)?
+  var onExitFocusMode: (() -> Void)?
 
   /// Slash-command menu state. Wired only on the normal chat surface. When `slashMatches` is
   /// non-nil and non-empty, the row overlays a dropdown above the composer.
@@ -46,6 +47,16 @@ struct InputRowView: View {
           onSubmit: onSubmit,
           onExitMode: { onExitSpotifyMode?() }
         )
+      } else if case let .some(modeBinding) = composerMode,
+                case let .focusStart(args) = modeBinding.wrappedValue
+      {
+        FocusChipComposer(
+          args: args,
+          isStreaming: isStreaming,
+          onArgsChange: { newValue in modeBinding.wrappedValue = .focusStart(args: newValue) },
+          onSubmit: onSubmit,
+          onExitMode: { onExitFocusMode?() }
+        )
       } else {
         TextField(
           "",
@@ -64,7 +75,7 @@ struct InputRowView: View {
 
       if isStreaming {
         StopStreamingButton(action: onStop)
-      } else if hasText || isSpotifyMode {
+      } else if hasText || isSpotifyMode || isFocusMode {
         Image(systemName: "arrow.turn.down.left")
           .font(.system(size: 14, weight: .medium))
           .foregroundStyle(PoroTheme.accent)
@@ -87,6 +98,13 @@ struct InputRowView: View {
 
   private var isSpotifyMode: Bool {
     if case let .some(mode) = composerMode, case .spotifyPlay = mode.wrappedValue {
+      return true
+    }
+    return false
+  }
+
+  private var isFocusMode: Bool {
+    if case let .some(mode) = composerMode, case .focusStart = mode.wrappedValue {
       return true
     }
     return false
@@ -234,6 +252,73 @@ private struct SpotifyChipComposer: View {
       // empty *right now* — `currentQuery` is the State-backed mirror that the closure can re-read
       // at fire time. Plain `let query` captured at install would always read the initial value.
       guard event.keyCode == 51, queryFocused, currentQuery.isEmpty else {
+        return event
+      }
+      onExitMode()
+      return nil
+    }
+  }
+
+  private func removeBackspaceMonitor() {
+    if let monitor = backspaceMonitor {
+      NSEvent.removeMonitor(monitor)
+      backspaceMonitor = nil
+    }
+  }
+}
+
+private struct FocusChipComposer: View {
+  let args: String
+  let isStreaming: Bool
+  let onArgsChange: (String) -> Void
+  let onSubmit: () -> Void
+  let onExitMode: () -> Void
+
+  @FocusState private var argsFocused: Bool
+
+  @State private var currentArgs: String = ""
+  @State private var backspaceMonitor: Any?
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Text("/focus")
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(PoroTheme.accent)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+          Capsule(style: .continuous)
+            .fill(PoroTheme.accent.opacity(0.18))
+        )
+
+      TextField(
+        "",
+        text: Binding(get: { args }, set: onArgsChange),
+        prompt: Text("e.g. 25m on writing")
+          .foregroundStyle(PoroTheme.mutedText)
+      )
+      .textFieldStyle(.plain)
+      .font(.system(size: 15, weight: .regular))
+      .foregroundStyle(PoroTheme.bodyText)
+      .focused($argsFocused)
+      .submitLabel(.send)
+      .onSubmit(onSubmit)
+      .disabled(isStreaming)
+    }
+    .onAppear {
+      currentArgs = args
+      DispatchQueue.main.async { argsFocused = true }
+      installBackspaceMonitor()
+    }
+    .onDisappear { removeBackspaceMonitor() }
+    .onChange(of: args) { _, newValue in
+      currentArgs = newValue
+    }
+  }
+
+  private func installBackspaceMonitor() {
+    backspaceMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+      guard event.keyCode == 51, argsFocused, currentArgs.isEmpty else {
         return event
       }
       onExitMode()
