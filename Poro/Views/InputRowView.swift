@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Single, persistent composer row. To kill the SwiftUI identity-churn flicker that used to fire
 /// every time a chip mode opened or closed, this view uses ONE TextField across all modes. The
@@ -26,7 +27,19 @@ struct InputRowView: View {
   /// NSTextField briefly displaying "/play " before SwiftUI re-renders.
   var onChipTriggerSpace: ((String) -> Bool)?
 
-  @State private var backspaceMonitor: Any?
+  /// Staged image attachments shown as thumbnails; submitted with the next message.
+  var attachments: [ChatImage] = []
+  var onPickImage: (() -> Void)?
+  var onRemoveAttachment: ((ChatImage.ID) -> Void)?
+  var onImageData: ((Data) -> Void)?
+
+  /// Slash-menu keyboard navigation. Handled by the composer's persistent key monitor (below) so
+  /// it's live the instant the menu opens — no per-appear install race. Delta is -1 (up) / +1 (down).
+  var onSlashMenuMove: ((Int) -> Void)?
+  var onSlashMenuConfirm: (() -> Void)?
+  var onSlashMenuDismiss: (() -> Void)?
+
+  @State private var composerKeyMonitor: Any?
   /// Mirror of `currentChipQuery` for the NSEvent monitor closure (which captures by reference
   /// at install time). SwiftUI re-creates the view struct on every keystroke, so a plain `let`
   /// capture inside the closure would read the install-time value forever.
@@ -38,6 +51,11 @@ struct InputRowView: View {
 
   private var isPickerActive: Bool {
     if case .spotifyOptionPicker = composerMode?.wrappedValue { return true }
+    return false
+  }
+
+  private var isSlashMenuActive: Bool {
+    if case let .slashMenu(_, matches) = composerMode?.wrappedValue { return !matches.isEmpty }
     return false
   }
 
@@ -111,6 +129,19 @@ struct InputRowView: View {
         .scaleEffect(isFocused ? 1.04 : 1)
         .animation(PoroTheme.shellAnimation, value: isFocused)
 
+      uploadButton
+
+      if !attachments.isEmpty {
+        HStack(spacing: 4) {
+          ForEach(attachments) { attachment in
+            AttachmentThumbnailView(
+              attachment: attachment,
+              onRemove: { onRemoveAttachment?(attachment.id) }
+            )
+          }
+        }
+      }
+
       // Chip + TextField sit in a tight inner HStack. The chip is always in the tree; its
       // opacity and frame animate when it shows/hides. SwiftUI doesn't remount the TextField,
       // so the focus signal and text don't flicker.
@@ -142,7 +173,7 @@ struct InputRowView: View {
 
       if isStreaming {
         StopStreamingButton(action: onStop)
-      } else if hasText || chipLabel != nil {
+      } else if hasText || chipLabel != nil || !attachments.isEmpty {
         Image(systemName: "arrow.turn.down.left")
           .font(.system(size: 14, weight: .medium))
           .foregroundStyle(PoroTheme.accent)
@@ -151,11 +182,14 @@ struct InputRowView: View {
     }
     .padding(.horizontal, 16)
     .frame(height: PoroTheme.collapsedSurfaceHeight)
+    .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+      handleImageDrop(providers)
+    }
     .onAppear {
       currentChipText = textFieldBinding.wrappedValue
-      installBackspaceMonitor()
+      installComposerKeyMonitor()
     }
-    .onDisappear { removeBackspaceMonitor() }
+    .onDisappear { removeComposerKeyMonitor() }
     .onChange(of: textFieldBinding.wrappedValue) { _, newValue in
       currentChipText = newValue
     }
@@ -177,38 +211,101 @@ struct InputRowView: View {
       .allowsHitTesting(chipLabel != nil)
   }
 
-  // MARK: - Backspace handling
+  // MARK: - Image attachments
 
-  /// Single global backspace monitor: when the chip is active, the field is focused, and the
-  /// chip query is empty, swallow the backspace and exit chip mode. Lives on InputRowView so
-  /// it's installed once for the lifetime of the row — no install/teardown per chip swap.
-  private func installBackspaceMonitor() {
-    backspaceMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-      guard event.keyCode == 51, isFocused, currentChipText.isEmpty else {
-        return event
+  private var uploadButton: some View {
+    Button(action: { onPickImage?() }) {
+      Image(systemName: "paperclip")
+        .font(.system(size: 14, weight: .medium))
+        .foregroundStyle(PoroTheme.mutedText)
+        .frame(width: 20, height: 20)
+    }
+    .buttonStyle(.plain)
+    .disabled(isStreaming)
+    .help("Attach image")
+  }
+
+  /// Stages images dropped onto the composer. Raw bytes are forwarded to the controller, which
+  /// decodes and downscales them off the main actor.
+  private func handleImageDrop(_ providers: [NSItemProvider]) -> Bool {
+    guard let onImageData else { return false }
+    var handled = false
+
+    for provider in providers {
+      if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+        handled = true
+        _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+          guard let data else { return }
+          Task { @MainActor in onImageData(data) }
+        }
+      } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        handled = true
+        _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+          guard
+            let data,
+            let url = URL(dataRepresentation: data, relativeTo: nil),
+            let imageData = try? Data(contentsOf: url)
+          else { return }
+          Task { @MainActor in onImageData(imageData) }
+        }
       }
-      switch composerMode?.wrappedValue {
-      case .spotifyPlay:
-        onExitSpotifyMode?()
-        return nil
-      case .focusStart:
-        onExitFocusMode?()
-        return nil
-      default:
-        return event
+    }
+
+    return handled
+  }
+
+  // MARK: - Composer key handling
+
+  /// One key monitor for the lifetime of the composer row (not per slash-menu appear). Because it's
+  /// already live before the menu opens, slash-menu arrow/return/escape keys are handled the instant
+  /// the menu appears — fixing the first-open race where the arrow used to fall through to the text
+  /// cursor. It also swallows backspace to exit an empty chip.
+  private func installComposerKeyMonitor() {
+    guard composerKeyMonitor == nil else { return }
+    composerKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+      // Slash-menu navigation. Gated on the normal composer being focused so this app-wide monitor
+      // never swallows keys meant for the focus panel (e.g. if a distraction expands it while the
+      // menu is open). Plain keys only — Cmd/Opt arrows belong to the panel-nudge monitor.
+      if isSlashMenuActive, isFocused {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if !mods.contains(.command), !mods.contains(.option) {
+          switch event.keyCode {
+          case 126: onSlashMenuMove?(-1); return nil // up
+          case 125: onSlashMenuMove?(1); return nil // down
+          case 36, 76: onSlashMenuConfirm?(); return nil // return / enter
+          case 53: onSlashMenuDismiss?(); return nil // escape
+          default: break
+          }
+        }
       }
+
+      // Backspace on an empty chip exits chip mode.
+      if event.keyCode == 51, isFocused, currentChipText.isEmpty {
+        switch composerMode?.wrappedValue {
+        case .spotifyPlay:
+          onExitSpotifyMode?()
+          return nil
+        case .focusStart:
+          onExitFocusMode?()
+          return nil
+        default:
+          return event
+        }
+      }
+
+      return event
     }
   }
 
-  private func removeBackspaceMonitor() {
-    if let monitor = backspaceMonitor {
+  private func removeComposerKeyMonitor() {
+    if let monitor = composerKeyMonitor {
       NSEvent.removeMonitor(monitor)
-      backspaceMonitor = nil
+      composerKeyMonitor = nil
     }
   }
 }
 
-/// Overlay container that owns the keyboard monitor and renders the slash-menu list. Positioned
+/// Renders the slash-menu list. Keyboard navigation lives in InputRowView's composer key monitor. Positioned
 /// by the parent (`ContentView`) so it can sit outside the chat surface's `clipShape` — the
 /// previous "render as `InputRowView` overlay with negative offset" structure caused the menu to
 /// draw inside the rounded-corner mask and disappear in collapsed-panel mode.
@@ -216,71 +313,60 @@ struct SlashCommandMenuOverlay: View {
   let matches: [SlashCommandDescriptor]
   @Binding var selectedIndex: Int
   let onSelect: (SlashCommandDescriptor) -> Void
-  let onDismiss: () -> Void
-
-  // State mirrors so the NSEvent monitor closure reads current values, not stale captures.
-  @State private var currentMatches: [SlashCommandDescriptor] = []
-  @State private var keyMonitor: Any?
 
   var body: some View {
     SlashCommandMenu(
       matches: matches,
       selectedIndex: selectedIndex,
-      onSelect: { selection in
-        removeMonitor()
-        onSelect(selection)
-      }
+      onSelect: onSelect
     )
     .frame(width: 260)
     // No fade transition: the panel resizes instantly when the slash menu opens/closes
     // (overlay-driven path in setNormalPanelHeight), so an animated fade would linger after
     // the panel has already shrunk and read as the panel "remaining elevated."
     .transition(.identity)
-    .onAppear {
-      currentMatches = matches
-      installMonitor()
-    }
-    .onDisappear { removeMonitor() }
+    // Keyboard navigation (up/down/return/escape) is handled by the composer's persistent key
+    // monitor in InputRowView, so it's live the instant the menu opens. This view only renders the
+    // list and handles mouse selection. Snap the highlight back if the matches list shrinks.
     .onChange(of: matches) { _, newValue in
-      currentMatches = newValue
-      // If the selected row no longer exists, snap back to 0.
       if selectedIndex >= newValue.count {
         selectedIndex = 0
       }
     }
   }
+}
 
-  private func installMonitor() {
-    keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-      let count = currentMatches.count
-      guard count > 0 else { return event }
+/// A staged image attachment shown in the composer, with a corner button to remove it.
+private struct AttachmentThumbnailView: View {
+  let attachment: ChatImage
+  let onRemove: () -> Void
 
-      switch event.keyCode {
-      case 126: // up arrow
-        selectedIndex = max(0, selectedIndex - 1)
-        return nil
-      case 125: // down arrow
-        selectedIndex = min(count - 1, selectedIndex + 1)
-        return nil
-      case 36, 76: // return, enter
-        let idx = max(0, min(count - 1, selectedIndex))
-        removeMonitor()
-        onSelect(currentMatches[idx])
-        return nil
-      case 53: // escape
-        removeMonitor()
-        onDismiss()
-        return nil
-      default:
-        return event
+  var body: some View {
+    ZStack(alignment: .topTrailing) {
+      thumbnail
+      Button(action: onRemove) {
+        Image(systemName: "xmark.circle.fill")
+          .font(.system(size: 11))
+          .symbolRenderingMode(.palette)
+          .foregroundStyle(.white, .black.opacity(0.55))
       }
+      .buttonStyle(.plain)
+      .offset(x: 5, y: -5)
     }
   }
 
-  private func removeMonitor() {
-    if let monitor = keyMonitor {
-      NSEvent.removeMonitor(monitor)
-      keyMonitor = nil
+  @ViewBuilder
+  private var thumbnail: some View {
+    if let nsImage = NSImage(data: attachment.data) {
+      Image(nsImage: nsImage)
+        .resizable()
+        .aspectRatio(contentMode: .fill)
+        .frame(width: 28, height: 28)
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+    } else {
+      RoundedRectangle(cornerRadius: 5, style: .continuous)
+        .fill(PoroTheme.mutedText.opacity(0.3))
+        .frame(width: 28, height: 28)
     }
   }
 }

@@ -9,4 +9,5 @@ struct ChatMessage: Identifiable {
   let id = UUID()
   let role: Role
   var text: String
+  var images: [ChatImage] = []
 }

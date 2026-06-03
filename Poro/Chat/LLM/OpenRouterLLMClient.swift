@@ -1,7 +1,10 @@
 import Foundation
 
-/// A client for interacting with the Cerebras LLM API, supporting streaming and eager context injection.
-struct CerebrasLLMClient: LLMClient {
+/// Streaming chat client for OpenRouter (OpenAI-compatible). Supports multimodal user messages:
+/// any `ChatMessage` carrying images is encoded with the OpenAI `image_url` content-part format so
+/// a vision model can see them. When a toolbox is available and the query warrants it, relevant
+/// system state is eagerly injected into the system prompt.
+struct OpenRouterLLMClient: LLMClient {
   let configuration: LLMConfiguration
   private let session: URLSession
   private let toolbox: (any AssistantToolbox)?
@@ -16,10 +19,10 @@ struct CerebrasLLMClient: LLMClient {
     self.toolbox = toolbox
   }
 
-  /// Streams a completion from the LLM. If a toolbox is available and the query warrants context,
-  /// relevant system state is eagerly injected into the system prompt.
+  /// Streams a completion. If a toolbox is available and the query warrants context, relevant
+  /// system state is eagerly injected into the system prompt.
   /// - Parameters:
-  ///   - messages: The conversation history.
+  ///   - messages: The conversation history (user messages may carry images).
   ///   - onDelta: A callback invoked on the main thread whenever a new text delta is received.
   nonisolated func streamCompletion(
     messages: [ChatMessage],
@@ -27,7 +30,6 @@ struct CerebrasLLMClient: LLMClient {
   ) async throws {
     var systemPrompt = baseSystemPrompt
 
-    // Eagerly fetch and inject context if tools are offered for this turn.
     if let toolbox {
       var toolboxPrompt = toolbox.systemPrompt
 
@@ -52,20 +54,26 @@ struct CerebrasLLMClient: LLMClient {
     )
   }
 
+  /// Pre-opens the pooled TLS connection so the user's first prompt skips the DNS/TCP/TLS handshake.
+  /// Uses a cheap authenticated `GET /key` (account metadata, not an inference call, so it doesn't
+  /// consume the model quota). Best-effort: every error is ignored.
+  nonisolated func warmUp() async {
+    let url = configuration.baseURL.appendingPathComponent("key")
+    var request = URLRequest(url: url)
+    request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+    _ = try? await session.data(for: request)
+  }
+
   private var baseSystemPrompt: String {
     """
     You are Poro, a macOS assistant that is actively backed by an LLM.
-    The chat completion provider is Cerebras.
+    The chat completion provider is OpenRouter.
     The configured model for this request is \(configuration.model).
+    You can see images the user attaches to a message — read them and answer questions about them.
     If the user asks whether you are running an LLM or what model you use, answer directly using this information.
     """
   }
 
-  /// Performs a standard streaming chat completion.
-  /// - Parameters:
-  ///   - messages: The conversation history.
-  ///   - systemPrompt: Optional system prompt to prepend (may contain injected context).
-  ///   - onDelta: Callback for text deltas.
   private func streamPlainCompletion(
     messages: [ChatMessage],
     systemPrompt: String? = nil,
@@ -107,7 +115,8 @@ struct CerebrasLLMClient: LLMClient {
       throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
     }
 
-    let parser = CerebrasStreamParser()
+    let parser = OpenAISSEStreamParser()
+    var receivedDelta = false
 
     for try await line in bytes.lines {
       try Task.checkCancellation()
@@ -118,38 +127,35 @@ struct CerebrasLLMClient: LLMClient {
       case .done:
         return
       case let .delta(deltaText):
+        receivedDelta = true
         await MainActor.run {
           onDelta(deltaText)
         }
       }
     }
 
-    throw LLMError.emptyResponse
+    // The stream can end without an explicit `[DONE]` (provider disconnect, proxy truncation).
+    // If content was already delivered, treat that as a successful completion, not an error.
+    guard receivedDelta else {
+      throw LLMError.emptyResponse
+    }
   }
 
-  /// Constructs a URLRequest for the Cerebras API.
-  /// - Parameter body: The encodable request body.
-  /// - Returns: A configured URLRequest.
   private func makeRequest(body: some Encodable) throws -> URLRequest {
     let requestURL = configuration.baseURL.appendingPathComponent("chat/completions")
     var request = URLRequest(url: requestURL)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
-
-    if let versionPatch = configuration.versionPatch {
-      request.setValue(versionPatch, forHTTPHeaderField: "X-Cerebras-Version-Patch")
-    }
+    // Optional OpenRouter attribution headers (harmless if the route ignores them).
+    request.setValue("Poro", forHTTPHeaderField: "X-Title")
 
     request.httpBody = try JSONEncoder().encode(body)
     return request
   }
 
-  /// Maps internal ChatMessage models to API-compatible RequestMessage models.
-  /// - Parameters:
-  ///   - messages: Internal message list.
-  ///   - systemPrompt: Optional system prompt text.
-  /// - Returns: A list of RequestMessage objects.
+  /// Maps internal `ChatMessage` models to API messages. Text-only messages encode `content` as a
+  /// plain string; messages with images encode `content` as an array of typed parts.
   private func makeRequestMessages(
     from messages: [ChatMessage],
     systemPrompt: String? = nil
@@ -157,33 +163,29 @@ struct CerebrasLLMClient: LLMClient {
     var requestMessages = [RequestMessage]()
 
     if let systemPrompt, !systemPrompt.isEmpty {
-      requestMessages.append(
-        RequestMessage(
-          role: "system",
-          content: systemPrompt,
-          tool_call_id: nil,
-          tool_calls: nil
-        )
-      )
+      requestMessages.append(RequestMessage(role: "system", content: .text(systemPrompt)))
     }
 
-    requestMessages.append(
-      contentsOf: messages.map { message in
-        RequestMessage(
-          role: message.role == .user ? "user" : "assistant",
-          content: message.text,
-          tool_call_id: nil,
-          tool_calls: nil
-        )
+    for message in messages {
+      let role = message.role == .user ? "user" : "assistant"
+
+      if message.images.isEmpty {
+        requestMessages.append(RequestMessage(role: role, content: .text(message.text)))
+      } else {
+        var parts = [ContentPart]()
+        if !message.text.isEmpty {
+          parts.append(ContentPart(text: message.text))
+        }
+        for image in message.images {
+          parts.append(ContentPart(imageURL: image.dataURL))
+        }
+        requestMessages.append(RequestMessage(role: role, content: .multipart(parts)))
       }
-    )
+    }
 
     return requestMessages
   }
 
-  /// Collects all bytes from an AsyncBytes stream into a single Data object.
-  /// - Parameter bytes: The byte stream.
-  /// - Returns: The fully collected data.
   private func collectResponseBody(from bytes: URLSession.AsyncBytes) async throws -> Data {
     var data = Data()
     for try await byte in bytes {
@@ -197,9 +199,58 @@ struct CerebrasLLMClient: LLMClient {
 
 private struct RequestMessage: Encodable {
   let role: String
-  let content: String?
-  let tool_call_id: String?
-  let tool_calls: [ResponseToolCall]?
+  let content: MessageContent
+}
+
+/// OpenAI/OpenRouter message content: either a bare string, or an array of typed parts (used when
+/// the message carries images).
+private enum MessageContent: Encodable {
+  case text(String)
+  case multipart([ContentPart])
+
+  func encode(to encoder: Encoder) throws {
+    switch self {
+    case let .text(string):
+      var container = encoder.singleValueContainer()
+      try container.encode(string)
+    case let .multipart(parts):
+      var container = encoder.unkeyedContainer()
+      for part in parts {
+        try container.encode(part)
+      }
+    }
+  }
+}
+
+/// A single content part. Optional fields are omitted from JSON when nil (synthesized
+/// `encodeIfPresent`), so a text part emits only `{type,text}` and an image part only
+/// `{type,image_url}`.
+private struct ContentPart: Encodable {
+  let type: String
+  let text: String?
+  let imageURL: ImageURL?
+
+  enum CodingKeys: String, CodingKey {
+    case type
+    case text
+    case imageURL = "image_url"
+  }
+
+  init(text: String) {
+    type = "text"
+    self.text = text
+    imageURL = nil
+  }
+
+  init(imageURL url: String) {
+    type = "image_url"
+    text = nil
+    imageURL = ImageURL(url: url)
+  }
+}
+
+private struct ImageURL: Encodable {
+  let url: String
 }
 
 private struct StreamChatCompletionsRequest: Encodable {

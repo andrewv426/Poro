@@ -1,6 +1,9 @@
 import Foundation
 
-struct CerebrasStreamParser {
+/// Parses a single Server-Sent Events line from an OpenAI-compatible streaming chat completion
+/// (OpenRouter, Cerebras, etc.). Standard format: `data: {json}` chunks ending with `data: [DONE]`,
+/// where each chunk carries `choices[0].delta.content`.
+struct OpenAISSEStreamParser {
   enum Event: Equatable {
     case delta(String)
     case done

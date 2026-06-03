@@ -52,12 +52,12 @@
       </BuildableProductRunnable>
       <EnvironmentVariables>
          <EnvironmentVariable
-            key = "CEREBRAS_API_KEY"
+            key = "OPENROUTER_API_KEY"
             value = ""
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
-            key = "CEREBRAS_MODEL"
+            key = "OPENROUTER_MODEL"
             value = ""
             isEnabled = "YES">
          </EnvironmentVariable>

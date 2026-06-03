@@ -26,7 +26,7 @@ final class ChatController {
 
     do {
       let configuration = try LLMConfiguration.loadFromEnvironment()
-      llmClient = CerebrasLLMClient(configuration: configuration)
+      llmClient = OpenRouterLLMClient(configuration: configuration)
     } catch {
       llmClient = UnavailableLLMClient(error: error)
     }
@@ -62,15 +62,15 @@ final class ChatController {
     !isSending
   }
 
-  func send(_ text: String) {
+  func send(_ text: String, images: [ChatImage] = []) {
     let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    guard !trimmedText.isEmpty, canSendMessage else {
+    guard !trimmedText.isEmpty || !images.isEmpty, canSendMessage else {
       return
     }
 
     requestState = .idle
-    session.appendUserMessage(trimmedText)
+    session.appendUserMessage(trimmedText, images: images)
     let messages = session.messages
     let assistantMessageID = session.appendAssistantPlaceholder()
     currentAssistantMessageID = assistantMessageID
@@ -96,6 +96,11 @@ final class ChatController {
 
   func stopStreaming() {
     streamTask?.cancel()
+  }
+
+  /// Pre-warms the LLM network connection. No-op for clients that don't support it.
+  func warmUp() async {
+    await llmClient.warmUp()
   }
 
   func appendLocalExchange(userText: String, assistantText: String) {

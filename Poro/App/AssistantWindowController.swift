@@ -72,13 +72,12 @@ final class AssistantWindowController {
     }
     normalPanel.onDragEnded = { [weak self] topLeft in
       guard let self else { return }
-      // AppKit reports the drop top-left at the current (possibly grown) panel height.
-      // Convert to the input-row-anchored form `normalFrame()` expects: storedTopLeft.y is
-      // the input row's TOP edge in screen y. Panel top = inputRowTopY + overlayContribution,
-      // so inputRowTopY = panel.top - overlay.
+      // AppKit reports the drop top-left (its y is the panel's top edge). Recover the stored
+      // input-row anchor from it via `anchorY(forPanelTopY:)`, which accounts for the content above
+      // the input row (the message list in expanded chat) rather than assuming top == anchor.
       let inputRowTopLeft = CGPoint(
         x: topLeft.x,
-        y: topLeft.y - normalOverlayHeight
+        y: anchorY(forPanelTopY: topLeft.y)
       )
       panelPlacement = .manual(topLeft: inputRowTopLeft)
       persistPanelPlacement()
@@ -377,33 +376,37 @@ final class AssistantWindowController {
 
   private func normalFrame() -> NSRect {
     let screenFrame = normalPanel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-    let topLeft: CGPoint = switch panelPlacement {
+    let rawTopLeft: CGPoint = switch panelPlacement {
     case .automatic:
       automaticTopLeft(in: screenFrame)
     case let .manual(storedTopLeft):
-      clampedTopLeft(storedTopLeft, in: screenFrame)
+      storedTopLeft
     }
 
-    // The input row is the anchor. `topLeft.y` is interpreted as the screen y of the input
-    // row's TOP edge — that's the stable reference point across every transition:
-    //
-    //   - Slash menu / Spotify picker (overlay) grows the panel UPWARD: panel top moves up
-    //     by `overlayContribution`, input row stays put.
-    //   - Composer hint footer ("↵ Resume Spotify") grows the panel DOWNWARD: panel bottom
-    //     drops by ~32px, input row stays put.
-    //   - Chat expand: panel top grows up by ~424px, input row stays put.
-    //
-    // Drag/nudge converts AppKit's reported top-left back to this input-row-anchored form
-    // (see `onDragEnded` and `nudgeNormalPanel`).
-    // Anchor: panel.bottom = inputRowBottomY - belowInputRow
-    //   where inputRowBottomY = topLeft.y - collapsedSurfaceHeight (input row's natural bottom)
-    //   and belowInputRow = how much of the baseline sits below the input row (the footer
-    //   strip's 32px block when a composer hint is shown; otherwise 0).
-    //
-    // Layout invariant: the input row's TOP edge stays at `topLeft.y` regardless of:
-    //   - overlay open/close (slash menu, Spotify picker) — panel grows upward
-    //   - footer hint appear/disappear — panel grows downward
-    //   - chat collapse↔expand — panel grows upward
+    // Page routes (settings, focus setup, summary) have no input row and are much taller than
+    // collapsed chat. Anchoring them by the input-row bottom (like chat) made them balloon UPWARD
+    // from the composer. Instead, pin a page's TOP to where the CHAT panel's top currently sits
+    // (`rawTopLeft.y + chatTopOffset` — the input-row top when collapsed, ~424px above it once a
+    // conversation has expanded the chat) and grow downward, clamped on screen. Switching chat↔page
+    // then keeps the window's top edge put whether the chat was collapsed or expanded.
+    if poroController.route(for: .normal) != .chat {
+      let clampedX = min(max(rawTopLeft.x, screenFrame.minX), screenFrame.maxX - PoroTheme.width)
+      let pageTopY = rawTopLeft.y + chatTopOffset
+      var panelBottomY = pageTopY - normalTotalHeight
+      panelBottomY = min(panelBottomY, screenFrame.maxY - normalTotalHeight)
+      panelBottomY = max(panelBottomY, screenFrame.minY)
+      return NSRect(x: clampedX, y: panelBottomY, width: PoroTheme.width, height: normalTotalHeight)
+    }
+
+    let topLeft = clampedTopLeft(rawTopLeft, in: screenFrame)
+
+    // Chat anchors on the input row. `topLeft.y` is the screen y of the input row's TOP edge — the
+    // stable reference across every chat transition:
+    //   - Slash menu / Spotify picker (overlay) grows the panel UPWARD; input row stays put.
+    //   - Composer hint footer grows the panel DOWNWARD (~32px); input row stays put.
+    //   - Chat collapse↔expand grows the panel UPWARD; input row stays put.
+    // Drag/nudge convert AppKit's reported top-left back to this form (see `onDragEnded` /
+    // `nudgeNormalPanel`). Anchor: panel.bottom = (topLeft.y - collapsedSurfaceHeight) - belowInputRow.
     let inputRowTopY = topLeft.y
     let inputRowBottomY = inputRowTopY - PoroTheme.collapsedSurfaceHeight
     let panelBottomY = inputRowBottomY - normalBelowInputRow
@@ -558,14 +561,34 @@ final class AssistantWindowController {
     return [123, 124, 125, 126].contains(event.keyCode)
   }
 
+  /// Vertical offset from the stored anchor (the chat input-row top) to the CHAT panel's top edge,
+  /// for the current conversation state: 0 when collapsed (the input row sits at the panel top),
+  /// ~424px once a conversation has expanded the panel upward. Page routes pin their top to this
+  /// same line, so switching chat↔page doesn't jump the window.
+  private var chatTopOffset: CGFloat {
+    let expanded = poroController.chatController(for: .normal).hasConversation
+    let total: CGFloat = if expanded { PoroTheme.expandedSurfaceHeight } else { PoroTheme.collapsedTotalHeight }
+    let below: CGFloat = if expanded { 0 } else { PoroTheme.collapsedTotalHeight - PoroTheme.collapsedSurfaceHeight }
+    return total - PoroTheme.collapsedSurfaceHeight - below
+  }
+
+  /// Recovers the stored anchor's y from a panel TOP-edge y, inverting `normalFrame()`'s geometry.
+  /// The anchor is the chat input-row top, which sits BELOW the panel top by the content above it
+  /// (≈424px in expanded chat). The old drag/nudge code assumed panel.top == anchor — true only for
+  /// collapsed chat / page routes — so in expanded chat it injected a ~424px upward jump that drove
+  /// the panel to the top clamp and locked vertical movement.
+  private func anchorY(forPanelTopY topY: CGFloat) -> CGFloat {
+    if poroController.route(for: .normal) == .chat {
+      return topY + PoroTheme.collapsedSurfaceHeight + normalBelowInputRow - normalTotalHeight
+    }
+    return topY - chatTopOffset
+  }
+
   private func nudgeNormalPanel(dx: CGFloat, dy: CGFloat) {
     let currentFrame = normalPanel.isVisible ? normalPanel.frame : normalFrame()
-    // Convert the moved top edge back to the input-row-anchored form `normalFrame()` expects
-    // (same conversion as `onDragEnded`): inputRowTopY = panel.top - overlay.
-    let inputRowTopY = currentFrame.maxY + dy - normalOverlayHeight
     let movedTopLeft = CGPoint(
       x: currentFrame.origin.x + dx,
-      y: inputRowTopY
+      y: anchorY(forPanelTopY: currentFrame.maxY) + dy
     )
     panelPlacement = .manual(topLeft: movedTopLeft)
     persistPanelPlacement()

@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @Observable
 @MainActor
@@ -20,6 +21,7 @@ final class PoroController {
   var composerMode: ComposerMode = .normal
   var focusSetupDraft: FocusStartDraft = .default
   var isFocusPanelTucked: Bool = false
+  var pendingImages: [ChatImage] = []
 
   func chatController(for context: AssistantPanelContext) -> ChatController {
     context == .focus ? focusChatController : chatController
@@ -31,8 +33,11 @@ final class PoroController {
 
   private let intentRouter: AppIntentRouter
   private let spotifyController = SpotifyController()
+  @ObservationIgnored private var lastWarmUpAt: Date?
   private let customDurationKey = "focus.customDurationMinutes"
   static let durationPresets = [25, 45, 60]
+  /// Cap on staged image attachments so the single-line composer can't overflow.
+  static let maxPendingImages = 4
 
   var spotifyIsPlaying: Bool {
     spotifyPlaybackPoller.isPlayingMusic
@@ -71,11 +76,11 @@ final class PoroController {
       let toolbox = FocusReadToolbox(focusSessionController: focusSessionController)
       chatController = ChatController(
         session: ChatSession(),
-        llmClient: CerebrasLLMClient(configuration: configuration, toolbox: toolbox)
+        llmClient: OpenRouterLLMClient(configuration: configuration, toolbox: toolbox)
       )
       focusChatController = ChatController(
         session: ChatSession(),
-        llmClient: CerebrasLLMClient(configuration: configuration)
+        llmClient: OpenRouterLLMClient(configuration: configuration)
       )
     } catch {
       chatController = ChatController(
@@ -135,12 +140,26 @@ final class PoroController {
     }
 
     refreshComposerHint(in: context)
+    warmUpLLMIfNeeded(in: context)
   }
 
   func panelWasHidden(_ context: AssistantPanelContext) {
     if context == .normal {
       spotifyPlaybackPoller.stopObserving()
     }
+  }
+
+  /// Pre-opens the OpenRouter connection when a chat panel is summoned, so the user's first prompt
+  /// skips the TLS handshake. Throttled: a pooled connection only idles out after a while, and
+  /// re-warming on every panel toggle would be wasteful. The shared `URLSession` means warming via
+  /// either chat benefits both.
+  private func warmUpLLMIfNeeded(in context: AssistantPanelContext) {
+    let now = Date()
+    if let lastWarmUpAt, now.timeIntervalSince(lastWarmUpAt) < 60 {
+      return
+    }
+    lastWarmUpAt = now
+    Task { await chatController(for: context).warmUp() }
   }
 
   func openSettings() {
@@ -398,7 +417,68 @@ final class PoroController {
     }
   }
 
+  // MARK: - Image attachments
+
+  /// Opens a file picker and stages the chosen images for the next normal-chat message. Decoding
+  /// and downscaling run off the main actor so large selections don't stall the UI.
+  func presentImagePicker() {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowedContentTypes = [.image]
+
+    guard panel.runModal() == .OK else { return }
+
+    for url in panel.urls {
+      Task.detached(priority: .userInitiated) { [weak self] in
+        guard
+          let data = try? Data(contentsOf: url),
+          let attachment = ImageAttachment.make(from: data)
+        else { return }
+        await self?.appendPendingImage(attachment)
+      }
+    }
+  }
+
+  /// Stages an image from raw bytes (a drop, etc.), decoding + downscaling off the main actor.
+  func addPendingImage(from data: Data) {
+    Task.detached(priority: .userInitiated) { [weak self] in
+      guard let attachment = ImageAttachment.make(from: data) else { return }
+      await self?.appendPendingImage(attachment)
+    }
+  }
+
+  private func appendPendingImage(_ attachment: ChatImage) {
+    guard pendingImages.count < Self.maxPendingImages else { return }
+    pendingImages.append(attachment)
+  }
+
+  func removePendingImage(_ id: ChatImage.ID) {
+    pendingImages.removeAll { $0.id == id }
+  }
+
+  func clearPendingImages() {
+    pendingImages.removeAll()
+  }
+
   func submitComposer(in context: AssistantPanelContext) {
+    // Image attachments (normal chat only) are always plain chat messages. Short-circuit here,
+    // before any chip synthesis, so an open /play or /focus chip can't hijack the image submission.
+    if context == .normal, !pendingImages.isEmpty {
+      let images = pendingImages
+      let body = composerDraft(for: context).trimmingCharacters(in: .whitespacesAndNewlines)
+      withoutAnimation {
+        composerMode = .normal
+        setRoute(.chat, in: context)
+        setComposerDraft("", in: context)
+        setComposerHint(nil, in: context)
+      }
+      clearPendingImages()
+      chatController(for: context).send(body, images: images)
+      return
+    }
+
     // If the normal-chat composer is in Spotify chip mode, synthesize the canonical "/play [query]"
     // string and reset the mode before falling into the existing router path.
     let submission: String

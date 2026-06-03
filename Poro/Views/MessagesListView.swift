@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MessagesListView: View {
@@ -57,23 +58,44 @@ private struct MessageBlockView: View {
         .tracking(0.8)
         .foregroundStyle(message.role == .assistant ? PoroTheme.accent : PoroTheme.mutedText)
 
-      HStack(alignment: .lastTextBaseline, spacing: 4) {
-        Text(message.text.isEmpty && showStreamingCursor ? " " : message.text)
-          .font(PoroTheme.font(size: 14.5, weight: .regular))
-          .lineSpacing(5)
-          .foregroundStyle(
-            message.role == .assistant ? PoroTheme.assistantBodyText : PoroTheme.bodyText
-          )
-          .textSelection(.enabled)
+      if !message.images.isEmpty {
+        HStack(alignment: .top, spacing: 6) {
+          ForEach(message.images) { image in
+            attachmentView(for: image)
+          }
+        }
+      }
 
-        if showStreamingCursor {
-          StreamingCursorView()
-            .padding(.bottom, 2)
+      if !message.text.isEmpty || showStreamingCursor {
+        HStack(alignment: .lastTextBaseline, spacing: 4) {
+          Text(message.text.isEmpty && showStreamingCursor ? " " : message.text)
+            .font(PoroTheme.font(size: 14.5, weight: .regular))
+            .lineSpacing(5)
+            .foregroundStyle(
+              message.role == .assistant ? PoroTheme.assistantBodyText : PoroTheme.bodyText
+            )
+            .textSelection(.enabled)
+
+          if showStreamingCursor {
+            StreamingCursorView()
+              .padding(.bottom, 2)
+          }
         }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.bottom, PoroTheme.messageSpacing)
+  }
+
+  @ViewBuilder
+  private func attachmentView(for image: ChatImage) -> some View {
+    if let nsImage = NSImage(data: image.data) {
+      Image(nsImage: nsImage)
+        .resizable()
+        .aspectRatio(contentMode: .fill)
+        .frame(width: 150, height: 150)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
   }
 }
 
