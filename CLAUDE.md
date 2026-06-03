@@ -13,9 +13,9 @@ Poro is a macOS floating assistant app written in Swift, SwiftUI, and AppKit. It
 
 Slash commands route deterministically (no LLM round-trip). Currently only `/play <song>` — types into the normal-chat composer and swaps the raw text for a styled `[/play]` chip + query field. Submitting plays the top Spotify search result. When `SPOTIFY_CLIENT_ID` is configured, the **Spotify Web API** (Spotify Connect) is used so the desktop client doesn't steal focus; otherwise (or when no active device is available) Poro falls back to AppleScript and snaps focus back via `onReactivateRequested`. Spotify is launched if not running on the AppleScript path. `<song> by <artist>` parses into a track+artist query for tighter relevance. `SlashCommandParser` runs before any natural-language matchers in `AppIntentRouter`, so new slash verbs are easy to add. See `Poro/Spotify/` and `Poro/App/Intent/SlashCommandParser.swift`.
 
-The LLM backend is **Cerebras streaming chat completions**. Configuration is loaded from environment variables at launch — see the env-var list below. Do not put API keys in source.
+The LLM backend is **OpenRouter streaming chat completions** (OpenAI-compatible). A single multimodal model serves both text and vision — the user can attach images to a message (paperclip button left of the composer, or drag-drop) and ask about them; images ride along in conversation history so follow-ups keep them in context. Configuration is loaded from environment variables at launch — see the env-var list below. Do not put API keys in source.
 
-Distraction detection runs while a focus session is active. It uses static rules first, then a Cerebras-backed classifier for ambiguous browser tabs. When a distraction is confirmed, the user gets a 10-second close-tab-or-explain prompt. Tab closing is conservative: Poro only closes a tab when its current URL still exactly matches the originally flagged URL.
+Distraction detection runs while a focus session is active. It uses static rules first, then an LLM classifier (the same OpenRouter model, via `CerebrasFocusDecisionClient`) for ambiguous browser tabs. When a distraction is confirmed, the user gets a 10-second close-tab-or-explain prompt. Tab closing is conservative: Poro only closes a tab when its current URL still exactly matches the originally flagged URL.
 
 ---
 
@@ -26,7 +26,7 @@ Distraction detection runs while a focus session is active. It uses static rules
 - **Language:** Swift 5+
 - **UI:** SwiftUI for views, AppKit (`NSPanel`) for the always-on-top window
 - **Hotkeys:** `KeyboardShortcuts` SPM package (sindresorhus, pinned to 2.4.0)
-- **LLM:** Cerebras chat completions (streaming, custom client)
+- **LLM:** OpenRouter chat completions (OpenAI-compatible, streaming, custom client); a single multimodal model handles text + vision
 - **Browser integration:** AppleScript for tab URL/title lookup and tab close
 - **Build:** Xcode 26.1+ (`Poro.xcodeproj`), single target `Poro`
 
@@ -37,17 +37,16 @@ Two sources, layered (non-empty process env wins on conflict):
 1. **`Poro/Poro.env`** — dotenv-style file (`KEY=VALUE` per line, `#` comments) bundled into the app at build time via Xcode's filesystem-synchronized group. Gitignored. Per-worktree (copy or symlink from `~/.config/poro/env`). Required path because the app is sandboxed and cannot read arbitrary home-directory files at runtime.
 2. **Xcode scheme env vars** — Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables. Per-user values live in `xcuserdata/` (gitignored). Convenient for one-off overrides.
 
-For a new worktree, run: `ln -s ~/.config/poro/env Poro/Poro.env` (or `cp`). `~/.config/poro/env` itself is the source of truth for your keys; `Poro/Poro.env` is the bundled copy. The Stop hook auto-creates this symlink if it's missing (see `hooks/ensure-env-symlink.sh`), so a fresh `git worktree add` followed by your first Claude Code turn is enough — no manual step required. If you build via Xcode without ever running the hook (e.g., immediately after `git worktree add`), create the symlink yourself first or the Cerebras key won't load.
+For a new worktree, run: `ln -s ~/.config/poro/env Poro/Poro.env` (or `cp`). `~/.config/poro/env` itself is the source of truth for your keys; `Poro/Poro.env` is the bundled copy. The Stop hook auto-creates this symlink if it's missing (see `hooks/ensure-env-symlink.sh`), so a fresh `git worktree add` followed by your first Claude Code turn is enough — no manual step required. If you build via Xcode without ever running the hook (e.g., immediately after `git worktree add`), create the symlink yourself first or the OpenRouter key won't load.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `CEREBRAS_API_KEY` | yes | — | Cerebras auth |
-| `CEREBRAS_MODEL` | no | `llama3.1-8b` | Model id |
-| `CEREBRAS_BASE_URL` | no | `https://api.cerebras.ai/v1` | API base URL |
-| `CEREBRAS_VERSION_PATCH` | no | — | Optional header |
+| `OPENROUTER_API_KEY` | yes | — | OpenRouter auth (create a free key at https://openrouter.ai/keys) |
+| `OPENROUTER_MODEL` | no | `nvidia/nemotron-nano-12b-v2-vl:free` | Vision-capable model id, used for both text and image chat. The Google `gemma-4-*:free` routes are frequently rate-limited upstream (429); the NVIDIA Nemotron VL free route is more reliably available. Other options: a Qwen3-VL `:free` slug |
+| `OPENROUTER_BASE_URL` | no | `https://openrouter.ai/api/v1` | API base URL |
 | `SPOTIFY_CLIENT_ID` | no | — | Enables the Spotify Web API path for `/play` (Spotify Connect, no focus flicker). Register an app at https://developer.spotify.com/dashboard with redirect URI `poro://spotify-callback`. Without this, `/play` uses the AppleScript fallback (Spotify briefly steals focus). |
 
-The shared `Poro.xcscheme` ships with **empty values** for `CEREBRAS_API_KEY` and `CEREBRAS_MODEL` as discoverability placeholders — never commit real values to `xcshareddata/`. Fill them in Xcode locally (auto-saved to gitignored `xcuserdata/`) or use the bundled `Poro/Poro.env` path above. Note: empty scheme values won't override the bundled file — `mergedEnvironment()` ignores empty strings.
+The shared `Poro.xcscheme` ships with **empty values** for `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` as discoverability placeholders — never commit real values to `xcshareddata/`. Fill them in Xcode locally (auto-saved to gitignored `xcuserdata/`) or use the bundled `Poro/Poro.env` path above. Note: empty scheme values won't override the bundled file — `mergedEnvironment()` ignores empty strings.
 
 Loaded by `LLMConfiguration.loadFromEnvironment()` (overlay implemented in `EnvFileLoader`).
 
@@ -72,7 +71,8 @@ That's why `EnvFileLoader` reads `Poro.env` from the bundle first, and why `Poro
 | Path | Contents |
 |---|---|
 | `Poro/App/` | `PoroApp.swift`, `AppDelegate.swift`, `PoroController.swift`, `AssistantWindowController.swift`, `StatusItemController.swift` |
-| `Poro/Chat/LLM/` | `CerebrasLLMClient.swift`, `LLMConfiguration.swift`, `LLMClient` protocol |
+| `Poro/Chat/LLM/` | `OpenRouterLLMClient.swift`, `OpenAISSEStreamParser.swift`, `LLMConfiguration.swift`, `LLMClient` protocol |
+| `Poro/Chat/Models/` | `ChatMessage.swift` (carries optional `images`), `ChatImage.swift`, `ImageAttachment.swift` (NSImage → downscaled JPEG) |
 | `Poro/Chat/State/` | `ChatController.swift`, chat session/history types |
 | `Poro/Chat/Tools/` | `FocusReadToolbox.swift`, `AssistantToolbox` protocol |
 | `Poro/Focus/State/` | `FocusSessionController.swift`, focus session lifecycle |
@@ -92,7 +92,7 @@ That's why `EnvFileLoader` reads `Poro.env` from the bundle first, and why `Poro
 | `AssistantWindowController` | Owns normal/focus `NSPanel`s, frame math, animation, focus tab dragging |
 | `PoroController` | App state, routing, normal/focus `ChatController`s, composer drafts, intent routing |
 | `ChatController` | Chat history, streaming state, LLM calls, assistant-only injected prompts |
-| `CerebrasLLMClient` | Streaming chat completion client and base system prompt composition |
+| `OpenRouterLLMClient` | Streaming (OpenAI-compatible) chat client, multimodal message encoding (`image_url` parts), base system prompt composition |
 | `FocusSessionController` | Focus session lifecycle, timer, activity logging, distraction detection |
 | `FrontmostActivityMonitor` | Polls frontmost app, enriches browsers with active tab metadata |
 | `BrowserTabContextProvider` | AppleScript URL/title lookup, conservative tab close |

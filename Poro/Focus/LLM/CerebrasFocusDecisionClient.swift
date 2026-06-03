@@ -1,5 +1,11 @@
 import Foundation
 
+/// Focus-session decision + distraction classification via the configured chat model (OpenRouter,
+/// OpenAI-compatible). Free models vary in structured-output support, so this client does NOT send a
+/// `response_format` schema (strict `json_schema` is rejected by many free models). Instead it prompts
+/// for an exact JSON shape and parses the reply leniently — tolerating markdown code fences or
+/// surrounding prose. On any failure the caller degrades to static rules, so a model that returns
+/// malformed output simply disables the LLM path rather than crashing.
 struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassifying {
   let configuration: LLMConfiguration
   private let session: URLSession
@@ -17,124 +23,15 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
     nudgesToday: Int,
     allowedOverrides: Int
   ) async throws -> FocusDecision {
-    struct RequestMessage: Encodable, Sendable {
-      let role: String
-      let content: String
-    }
-
-    struct ChatCompletionsRequest: Encodable, Sendable {
-      struct ResponseFormat: Encodable, Sendable {
-        struct JSONSchemaConfiguration: Encodable, Sendable {
-          let name: String
-          let strict: Bool
-          let schema: Schema
-        }
-
-        struct Schema: Encodable, Sendable {
-          let type: String
-          let properties: [String: Property]
-          let required: [String]
-          let additionalProperties: Bool
-        }
-
-        struct Property: Encodable, Sendable {
-          let type: String?
-          let enumValues: [String]?
-          let anyOf: [AnyOfProperty]?
-
-          enum CodingKeys: String, CodingKey {
-            case type
-            case enumValues = "enum"
-            case anyOf
-          }
-        }
-
-        struct AnyOfProperty: Encodable, Sendable {
-          let type: String
-        }
-
-        let type: String
-        let jsonSchema: JSONSchemaConfiguration
-
-        enum CodingKeys: String, CodingKey {
-          case type
-          case jsonSchema = "json_schema"
-        }
-      }
-
-      let model: String
-      let messages: [RequestMessage]
-      let responseFormat: ResponseFormat
-      let temperature: Double
-
-      enum CodingKeys: String, CodingKey {
-        case model
-        case messages
-        case responseFormat = "response_format"
-        case temperature
-      }
-    }
-
-    struct ChatCompletionsResponse: Decodable, Sendable {
-      struct Choice: Decodable, Sendable {
-        struct Message: Decodable, Sendable {
-          let content: String
-        }
-
-        let message: Message
-      }
-
-      let choices: [Choice]
-    }
-
-    struct DecisionPayload: Decodable, Sendable {
-      let verdict: String
-      let message: String
-      let allowMinutes: Int?
-    }
-
-    struct ErrorResponse: Decodable, Sendable {
-      let error: APIError
-    }
-
-    struct APIError: Decodable, Sendable {
-      let message: String?
-    }
-
-    let requestURL = configuration.baseURL.appendingPathComponent("chat/completions")
-    var request = URLRequest(url: requestURL)
-    request.httpMethod = "POST"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
-
-    let responseFormat = ChatCompletionsRequest.ResponseFormat(
-      type: "json_schema",
-      jsonSchema: .init(
-        name: "focus_decision",
-        strict: true,
-        schema: .init(
-          type: "object",
-          properties: [
-            "verdict": .init(type: "string", enumValues: ["allow", "deny"], anyOf: nil),
-            "message": .init(type: "string", enumValues: nil, anyOf: nil),
-            "allowMinutes": .init(
-              type: nil,
-              enumValues: nil,
-              anyOf: [.init(type: "integer"), .init(type: "null")]
-            ),
-          ],
-          required: ["verdict", "message", "allowMinutes"],
-          additionalProperties: false
-        )
-      )
-    )
-
     let systemPrompt = """
     You are a strict but fair focus coach.
     Decide whether the user should be allowed to keep using the distracting activity they were just caught on.
     Only allow if the justification is concrete, relevant to the stated goal, and time-bounded.
     Deny vague avoidance, generic breaks, and low-accountability excuses.
     Keep the message short, direct, and user-facing.
+
+    Respond with ONLY a single JSON object — no prose, no markdown, no code fences — in exactly this shape:
+    {"verdict": "allow" or "deny", "message": "<short user-facing message>", "allowMinutes": <integer minutes 1-15, or null when denied>}
     """
 
     let userPrompt = """
@@ -145,68 +42,34 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
     Nudges so far: \(nudgesToday)
     Allowed overrides so far: \(allowedOverrides)
 
-    Return JSON only.
+    Return only the JSON object.
     """
 
-    let requestBody = ChatCompletionsRequest(
-      model: configuration.model,
-      messages: [
-        .init(role: "system", content: systemPrompt),
-        .init(role: "user", content: userPrompt),
-      ],
-      responseFormat: responseFormat,
+    let content = try await completion(
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
       temperature: 0.2
     )
-    request.httpBody = try JSONEncoder().encode(requestBody)
 
-    let data: Data
-    let response: URLResponse
-
-    do {
-      (data, response) = try await session.data(for: request)
-    } catch {
-      let urlError = error as? URLError
-      throw LLMError.networkFailure(
-        description: error.localizedDescription,
-        code: urlError?.errorCode,
-        url: requestURL.absoluteString
-      )
+    struct DecisionPayload: Decodable {
+      let verdict: String
+      let message: String
+      let allowMinutes: Int?
     }
-
-    guard let httpResponse = response as? HTTPURLResponse else {
-      throw LLMError.invalidResponse
-    }
-
-    guard (200 ... 299).contains(httpResponse.statusCode) else {
-      let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data)
-      throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
-    }
-
-    let completion = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
 
     guard
-      let content = completion.choices.first?.message.content.data(using: .utf8)
+      let json = Self.extractJSONObject(from: content),
+      let payload = try? JSONDecoder().decode(DecisionPayload.self, from: json)
     else {
       throw LLMError.emptyResponse
     }
 
-    let payload = try JSONDecoder().decode(DecisionPayload.self, from: content)
-    let verdict: FocusDecision.Verdict = if payload.verdict.lowercased() == "allow" { .allow } else { .deny }
-
-    if verdict == .allow {
+    if payload.verdict.lowercased() == "allow" {
       let grantedMinutes = max(1, min(payload.allowMinutes ?? 5, 15))
-      return FocusDecision(
-        verdict: .allow,
-        message: payload.message,
-        allowMinutes: grantedMinutes
-      )
+      return FocusDecision(verdict: .allow, message: payload.message, allowMinutes: grantedMinutes)
     }
 
-    return FocusDecision(
-      verdict: .deny,
-      message: payload.message,
-      allowMinutes: nil
-    )
+    return FocusDecision(verdict: .deny, message: payload.message, allowMinutes: nil)
   }
 
   nonisolated func classifyDistraction(
@@ -214,116 +77,15 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
     remainingMinutes: Int,
     activity: ActivityContext
   ) async throws -> DistractionClassification {
-    struct RequestMessage: Encodable, Sendable {
-      let role: String
-      let content: String
-    }
-
-    struct ChatCompletionsRequest: Encodable, Sendable {
-      struct ResponseFormat: Encodable, Sendable {
-        struct JSONSchemaConfiguration: Encodable, Sendable {
-          let name: String
-          let strict: Bool
-          let schema: Schema
-        }
-
-        struct Schema: Encodable, Sendable {
-          let type: String
-          let properties: [String: Property]
-          let required: [String]
-          let additionalProperties: Bool
-        }
-
-        struct Property: Encodable, Sendable {
-          let type: String?
-          let enumValues: [String]?
-
-          enum CodingKeys: String, CodingKey {
-            case type
-            case enumValues = "enum"
-          }
-        }
-
-        let type: String
-        let jsonSchema: JSONSchemaConfiguration
-
-        enum CodingKeys: String, CodingKey {
-          case type
-          case jsonSchema = "json_schema"
-        }
-      }
-
-      let model: String
-      let messages: [RequestMessage]
-      let responseFormat: ResponseFormat
-      let temperature: Double
-
-      enum CodingKeys: String, CodingKey {
-        case model
-        case messages
-        case responseFormat = "response_format"
-        case temperature
-      }
-    }
-
-    struct ChatCompletionsResponse: Decodable, Sendable {
-      struct Choice: Decodable, Sendable {
-        struct Message: Decodable, Sendable {
-          let content: String
-        }
-
-        let message: Message
-      }
-
-      let choices: [Choice]
-    }
-
-    struct ClassificationPayload: Decodable, Sendable {
-      let verdict: String
-      let score: Double
-      let reason: String
-    }
-
-    struct ErrorResponse: Decodable, Sendable {
-      let error: APIError
-    }
-
-    struct APIError: Decodable, Sendable {
-      let message: String?
-    }
-
-    let requestURL = configuration.baseURL.appendingPathComponent("chat/completions")
-    var request = URLRequest(url: requestURL)
-    request.httpMethod = "POST"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
-
-    let responseFormat = ChatCompletionsRequest.ResponseFormat(
-      type: "json_schema",
-      jsonSchema: .init(
-        name: "distraction_classification",
-        strict: true,
-        schema: .init(
-          type: "object",
-          properties: [
-            "verdict": .init(type: "string", enumValues: ["allow", "distract"]),
-            "score": .init(type: "number", enumValues: nil),
-            "reason": .init(type: "string", enumValues: nil),
-          ],
-          required: ["verdict", "score", "reason"],
-          additionalProperties: false
-        )
-      )
-    )
-
     let systemPrompt = """
     You classify whether a browser tab is distracting for the user's current focus session.
-    Use the goal, URL, host, and page title. Mark distract for unrelated entertainment, social media,
-    shopping, news, idle browsing, or obvious avoidance. Mark allow for docs, research, work tools,
+    Use the goal, URL, host, and page title. Mark "distract" for unrelated entertainment, social media,
+    shopping, news, idle browsing, or obvious avoidance. Mark "allow" for docs, research, work tools,
     educational material, or anything plausibly necessary for the stated goal.
-    Score is the probability from 0.0 to 1.0 that this tab is distracting.
     Be conservative near ambiguity: allow unless the tab is likely unrelated to the goal.
-    Return JSON only.
+
+    Respond with ONLY a single JSON object — no prose, no markdown, no code fences — in exactly this shape:
+    {"verdict": "allow" or "distract", "score": <number 0.0-1.0, the probability the tab is distracting>, "reason": "<short explanation>"}
     """
 
     let userPrompt = """
@@ -334,23 +96,87 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
     Host: \(activity.pageHost ?? "unknown")
     Title: \(activity.pageTitle ?? "unknown")
 
-    Return JSON only.
+    Return only the JSON object.
     """
 
-    let requestBody = ChatCompletionsRequest(
-      model: configuration.model,
-      messages: [
-        .init(role: "system", content: systemPrompt),
-        .init(role: "user", content: userPrompt),
-      ],
-      responseFormat: responseFormat,
+    let content = try await completion(
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
       temperature: 0
     )
-    request.httpBody = try JSONEncoder().encode(requestBody)
+
+    struct ClassificationPayload: Decodable {
+      let verdict: String
+      let score: Double
+      let reason: String
+    }
+
+    guard
+      let json = Self.extractJSONObject(from: content),
+      let payload = try? JSONDecoder().decode(ClassificationPayload.self, from: json)
+    else {
+      throw LLMError.emptyResponse
+    }
+
+    let verdict: DistractionClassification.Verdict =
+      if payload.verdict.lowercased() == "distract" { .distract } else { .allow }
+    let score = min(1, max(0, payload.score))
+
+    return DistractionClassification(verdict: verdict, score: score, reason: payload.reason)
+  }
+
+  // MARK: - Shared chat plumbing
+
+  /// Sends a system + user prompt to the chat model and returns the raw assistant message content.
+  private nonisolated func completion(
+    systemPrompt: String,
+    userPrompt: String,
+    temperature: Double
+  ) async throws -> String {
+    struct RequestMessage: Encodable {
+      let role: String
+      let content: String
+    }
+
+    struct ChatCompletionsRequest: Encodable {
+      let model: String
+      let messages: [RequestMessage]
+      let temperature: Double
+    }
+
+    struct ChatCompletionsResponse: Decodable {
+      struct Choice: Decodable {
+        struct Message: Decodable { let content: String }
+        let message: Message
+      }
+
+      let choices: [Choice]
+    }
+
+    struct ErrorResponse: Decodable {
+      struct APIError: Decodable { let message: String? }
+      let error: APIError
+    }
+
+    let requestURL = configuration.baseURL.appendingPathComponent("chat/completions")
+    var request = URLRequest(url: requestURL)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+    request.setValue("Poro", forHTTPHeaderField: "X-Title")
+
+    let body = ChatCompletionsRequest(
+      model: configuration.model,
+      messages: [
+        RequestMessage(role: "system", content: systemPrompt),
+        RequestMessage(role: "user", content: userPrompt),
+      ],
+      temperature: temperature
+    )
+    request.httpBody = try JSONEncoder().encode(body)
 
     let data: Data
     let response: URLResponse
-
     do {
       (data, response) = try await session.data(for: request)
     } catch {
@@ -371,23 +197,47 @@ struct CerebrasFocusDecisionClient: FocusDecisionEvaluating, DistractionClassify
       throw LLMError.unexpectedStatusCode(httpResponse.statusCode, errorResponse?.error.message)
     }
 
-    let completion = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
-
-    guard
-      let content = completion.choices.first?.message.content.data(using: .utf8)
-    else {
+    let decoded = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
+    guard let content = decoded.choices.first?.message.content, !content.isEmpty else {
       throw LLMError.emptyResponse
     }
 
-    let payload = try JSONDecoder().decode(ClassificationPayload.self, from: content)
-    let verdict: DistractionClassification.Verdict =
-      if payload.verdict.lowercased() == "distract" { .distract } else { .allow }
-    let score = min(1, max(0, payload.score))
+    return content
+  }
 
-    return DistractionClassification(
-      verdict: verdict,
-      score: score,
-      reason: payload.reason
-    )
+  /// Extracts the first balanced JSON object from a model reply that may wrap it in markdown fences
+  /// or surrounding prose. Braces inside string literals are ignored. Returns nil if none is found.
+  nonisolated static func extractJSONObject(from text: String) -> Data? {
+    guard let start = text.firstIndex(of: "{") else { return nil }
+
+    var depth = 0
+    var inString = false
+    var escaped = false
+    var index = start
+
+    while index < text.endIndex {
+      let character = text[index]
+
+      if escaped {
+        escaped = false
+      } else if character == "\\" {
+        escaped = true
+      } else if character == "\"" {
+        inString.toggle()
+      } else if !inString {
+        if character == "{" {
+          depth += 1
+        } else if character == "}" {
+          depth -= 1
+          if depth == 0 {
+            return String(text[start ... index]).data(using: .utf8)
+          }
+        }
+      }
+
+      index = text.index(after: index)
+    }
+
+    return nil
   }
 }

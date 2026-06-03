@@ -302,7 +302,17 @@ struct ContentView: View {
           composerMode: composerModeBinding,
           onExitSpotifyMode: { poroController.exitSpotifyMode() },
           onExitFocusMode: { poroController.exitFocusMode() },
-          onChipTriggerSpace: { draft in poroController.handleChipTriggerSpace(currentDraft: draft) }
+          onChipTriggerSpace: { draft in poroController.handleChipTriggerSpace(currentDraft: draft) },
+          attachments: poroController.pendingImages,
+          onPickImage: { poroController.presentImagePicker() },
+          onRemoveAttachment: { poroController.removePendingImage($0) },
+          onImageData: { poroController.addPendingImage(from: $0) },
+          onSlashMenuMove: { delta in moveSlashSelection(by: delta) },
+          onSlashMenuConfirm: { confirmSlashSelection() },
+          onSlashMenuDismiss: {
+            poroController.dismissSlashMenu()
+            slashSelectedIndex = 0
+          }
         )
       }
     }
@@ -395,6 +405,20 @@ struct ContentView: View {
     return nil
   }
 
+  /// Moves the slash-menu highlight by `delta`, clamped to the current matches. Driven by the
+  /// composer's persistent key monitor (InputRowView) so it works the instant the menu opens.
+  private func moveSlashSelection(by delta: Int) {
+    guard let matches = currentSlashMatches, !matches.isEmpty else { return }
+    slashSelectedIndex = max(0, min(matches.count - 1, slashSelectedIndex + delta))
+  }
+
+  private func confirmSlashSelection() {
+    guard let matches = currentSlashMatches, !matches.isEmpty else { return }
+    let index = max(0, min(matches.count - 1, slashSelectedIndex))
+    poroController.selectSlashCommand(matches[index])
+    slashSelectedIndex = 0
+  }
+
   private var currentSpotifyPickerState: SpotifyPickerState? {
     if case let .spotifyOptionPicker(state) = poroController.composerMode {
       return state
@@ -413,10 +437,6 @@ struct ContentView: View {
         selectedIndex: $slashSelectedIndex,
         onSelect: { descriptor in
           poroController.selectSlashCommand(descriptor)
-          slashSelectedIndex = 0
-        },
-        onDismiss: {
-          poroController.dismissSlashMenu()
           slashSelectedIndex = 0
         }
       )

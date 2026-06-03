@@ -9,8 +9,8 @@ final class ChatSession {
     !messages.isEmpty
   }
 
-  func appendUserMessage(_ text: String) {
-    messages.append(ChatMessage(role: .user, text: text))
+  func appendUserMessage(_ text: String, images: [ChatImage] = []) {
+    messages.append(ChatMessage(role: .user, text: text, images: images))
   }
 
   func appendAssistantMessage(_ text: String) {

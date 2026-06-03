@@ -4,22 +4,21 @@ struct LLMConfiguration {
   let apiKey: String
   let model: String
   let baseURL: URL
-  let versionPatch: String?
 
   static func loadFromEnvironment(
     environment: [String: String] = EnvFileLoader.mergedEnvironment()
   ) throws -> LLMConfiguration {
     guard
-      let rawAPIKey = environment["CEREBRAS_API_KEY"]?.trimmingCharacters(
+      let rawAPIKey = environment["OPENROUTER_API_KEY"]?.trimmingCharacters(
         in: .whitespacesAndNewlines
       ),
       !rawAPIKey.isEmpty
     else {
-      throw LLMError.missingAPIKey(environmentVariable: "CEREBRAS_API_KEY")
+      throw LLMError.missingAPIKey(environmentVariable: "OPENROUTER_API_KEY")
     }
 
-    let resolvedModel = nonEmpty(environment["CEREBRAS_MODEL"]) ?? "llama3.1-8b"
-    let resolvedBaseURLString = nonEmpty(environment["CEREBRAS_BASE_URL"]) ?? "https://api.cerebras.ai/v1"
+    let resolvedModel = nonEmpty(environment["OPENROUTER_MODEL"]) ?? "nvidia/nemotron-nano-12b-v2-vl:free"
+    let resolvedBaseURLString = nonEmpty(environment["OPENROUTER_BASE_URL"]) ?? "https://openrouter.ai/api/v1"
 
     guard let baseURL = URL(string: resolvedBaseURLString) else {
       throw LLMError.invalidBaseURL(resolvedBaseURLString)
@@ -28,8 +27,7 @@ struct LLMConfiguration {
     return LLMConfiguration(
       apiKey: rawAPIKey,
       model: resolvedModel,
-      baseURL: baseURL,
-      versionPatch: nonEmpty(environment["CEREBRAS_VERSION_PATCH"])
+      baseURL: baseURL
     )
   }
 
